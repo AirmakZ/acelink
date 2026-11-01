@@ -12,6 +12,8 @@ struct PlaybackActions {
     var play: (StreamLink) -> Void
     var playFromClipboard: () -> Void
     var stop: () -> Void
+    var checkAvailability: (UUID) -> Void
+    var cancelCheck: () -> Void
 }
 
 /// View state for ChannelsView. (An ObservableObject instead of @State so the app
@@ -27,6 +29,7 @@ final class ChannelsUIState: ObservableObject {
 struct ChannelsView: View {
     @ObservedObject var store: ChannelStore
     @ObservedObject var status: PlaybackStatus
+    @ObservedObject var checker = LinkChecker.shared
     let actions: PlaybackActions
 
     @StateObject private var ui = ChannelsUIState()
@@ -42,6 +45,8 @@ struct ChannelsView: View {
                         channel: channel,
                         store: store,
                         status: status,
+                        checker: checker,
+                        actions: actions,
                         onPlay: actions.play,
                         onEditChannel: { ui.editingChannel = channel },
                         onEditLink: { ui.editingLink = $0 },
@@ -139,6 +144,8 @@ struct ChannelsView: View {
                         )
                     }
                     Button("Add Links in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
+                    Button("Check Availability") { actions.checkAvailability(channel.id) }
+                        .disabled(channel.links.isEmpty || checker.isRunning || status.isBusy)
                     Divider()
                     Button("Delete Channel…") { ui.channelPendingDelete = channel }
                 }
@@ -187,6 +194,8 @@ struct ChannelDetailView: View {
     let channel: Channel
     @ObservedObject var store: ChannelStore
     @ObservedObject var status: PlaybackStatus
+    @ObservedObject var checker: LinkChecker
+    let actions: PlaybackActions
     let onPlay: (StreamLink) -> Void
     let onEditChannel: () -> Void
     let onEditLink: (LinkEditTarget) -> Void
@@ -214,6 +223,7 @@ struct ChannelDetailView: View {
                             link: link,
                             isActive: status.activeLinkID == link.id,
                             isBusy: status.isBusy,
+                            availability: checker.results[link.id],
                             onPlay: { onPlay(link) }
                         )
                         .contextMenu {
@@ -255,6 +265,7 @@ struct ChannelDetailView: View {
                     .foregroundColor(.secondary)
             }
             Spacer()
+            checkButton
             Button("Edit", action: onEditChannel)
             Button("Add in Bulk…", action: onBulkAdd)
                 .keyboardShortcut("l", modifiers: [.command, .shift])
@@ -266,9 +277,50 @@ struct ChannelDetailView: View {
         .padding(16)
     }
 
+    @ViewBuilder
+    private var checkButton: some View {
+        if checker.checkingChannelID == channel.id {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking…").foregroundColor(.secondary)
+                Button("Cancel", action: actions.cancelCheck)
+            }
+        } else {
+            Button {
+                actions.checkAvailability(channel.id)
+            } label: {
+                Label("Check Availability", systemImage: "antenna.radiowaves.left.and.right")
+            }
+            .disabled(channel.links.isEmpty || checker.isRunning || status.isBusy)
+            .help("Test every link at the same time. Working links move to the top.")
+        }
+    }
+
     private func addLink() {
         let draft = LinkEditor.draftFromClipboard(defaultName: "Link \(channel.links.count + 1)")
         onEditLink(LinkEditTarget(channelID: channel.id, link: draft, isNew: true))
+    }
+}
+
+struct AvailabilityDot: View {
+    let availability: Availability?
+
+    var body: some View {
+        Group {
+            switch availability {
+            case .checking:
+                ProgressView().controlSize(.mini)
+            case .available:
+                Circle().fill(Color.green).frame(width: 9, height: 9)
+                    .help("Available: peers found")
+            case .unavailable:
+                Circle().fill(Color.red).frame(width: 9, height: 9)
+                    .help("Unavailable: no peers found")
+            case nil:
+                Color.clear
+            }
+        }
+        .frame(width: 12, height: 12)
     }
 }
 
@@ -280,6 +332,7 @@ struct LinkRow: View {
     let link: StreamLink
     let isActive: Bool
     let isBusy: Bool
+    let availability: Availability?
     let onPlay: () -> Void
 
     @StateObject private var hover = HoverState()
@@ -298,6 +351,8 @@ struct LinkRow: View {
             }
             .font(.system(size: 22))
             .frame(width: 26)
+
+            AvailabilityDot(availability: availability)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(link.name.isEmpty ? "Untitled link" : link.name)

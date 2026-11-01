@@ -105,6 +105,23 @@ final class ChannelStore: ObservableObject {
         channels[index].links.append(contentsOf: links)
     }
 
+    /// Puts available links first and unavailable ones last, keeping the order within each group.
+    /// Links without a result (e.g. added during the check) stay in the middle.
+    func sortLinks(in channelID: UUID, by availability: [UUID: Bool]) {
+        guard let index = channels.firstIndex(where: { $0.id == channelID }) else { return }
+        func rank(_ link: StreamLink) -> Int {
+            switch availability[link.id] {
+            case true: return 0
+            case nil: return 1
+            case false: return 2
+            }
+        }
+        let links = channels[index].links
+        channels[index].links = links.enumerated()
+            .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
+            .map(\.element)
+    }
+
     func delete(linkID: UUID, in channelID: UUID) {
         guard let index = channels.firstIndex(where: { $0.id == channelID }) else { return }
         channels[index].links.removeAll { $0.id == linkID }

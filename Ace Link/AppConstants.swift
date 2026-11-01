@@ -26,5 +26,7 @@ public enum AppConstants {
         static let enginePort = 6878
         static let image = "blaiseio/acelink:\(AppConstants.version)"
         static let proxyPort = 6888
+        // The image is only published for Intel; Apple Silicon runs it through emulation.
+        static let platform = "linux/amd64"
     }
 }

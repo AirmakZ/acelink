@@ -1,5 +1,6 @@
 import Cocoa
 import os
+import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
@@ -8,6 +9,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var engine: AceStreamEngine?
     private var channelsWindow: ChannelsWindowController?
     private let status = PlaybackStatus.shared
+    private let checker = LinkChecker.shared
 
     /// Bumped every time a stream is opened or stopped. Callbacks from an older
     /// attempt compare against it and bail out, so clicking another link (or Stop)
@@ -69,7 +71,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             channelsWindow = ChannelsWindowController(actions: PlaybackActions(
                 play: { [weak self] link in self?.play(link: link) },
                 playFromClipboard: { [weak self] in self?.playFromClipboard() },
-                stop: { [weak self] in self?.stopPlayback() }
+                stop: { [weak self] in self?.stopPlayback() },
+                checkAvailability: { [weak self] in self?.checkAvailability(channelID: $0) },
+                cancelCheck: { [weak self] in self?.cancelCheck() }
             ))
         }
         channelsWindow?.show()
@@ -94,12 +98,88 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func stopPlayback() {
+        checker.cancel()
         generation += 1
         loading.stop()
         terminateLaunchedBundle()
         stopAceStreamServer()
         status.activeLinkID = nil
         status.set(.idle)
+    }
+
+    // MARK: - Availability check
+
+    func checkAvailability(channelID: UUID) {
+        guard let channel = ChannelStore.shared.channel(id: channelID), !channel.links.isEmpty,
+              !checker.isRunning, !status.isBusy else { return }
+
+        if Process.runCommand("docker", "--version").terminationStatus != 0 {
+            fail("Docker is not installed. Install Docker Desktop from the menu bar icon.",
+                 generation: generation)
+            return
+        }
+
+        checker.begin(channel: channel)
+
+        // If a stream is playing, use its engine instead of restarting it.
+        let reuseEngine = launchedBundle != nil && engine != nil
+        let prepareEngine = reuseEngine ? { done in done(nil) } : startEngineForCheck
+
+        prepareEngine { error in
+            guard self.checker.checkingChannelID == channelID else { return } // Cancelled.
+            if let error = error {
+                self.checker.cancel()
+                self.status.set(.failed(error))
+                return
+            }
+            if !reuseEngine {
+                self.status.set(.working("Checking \(channel.links.count) links…"))
+            }
+            self.checker.run(channel: channel) { outcome in
+                let available = outcome.values.filter { $0 }.count
+                os_log("Check done: %d of %d available.", available, outcome.count)
+                withAnimation {
+                    ChannelStore.shared.sortLinks(in: channelID, by: outcome)
+                }
+                self.finishCheck()
+            }
+        }
+    }
+
+    func cancelCheck() {
+        checker.cancel()
+        finishCheck()
+    }
+
+    /// Stops the engine after a check, unless a stream is playing or loading.
+    private func finishCheck() {
+        guard launchedBundle == nil else { return }
+        if case .working = status.state, status.activeLinkID != nil { return }
+        stopAceStreamServer()
+        status.set(.idle)
+    }
+
+    private func startEngineForCheck(_ done: @escaping (String?) -> Void) {
+        status.set(.working("Starting Docker…"))
+        DockerEngine().task { error in
+            guard self.checker.isRunning else { return }
+            if let message = error?.errorDescription { return done(message) }
+
+            self.status.set(.working("Preparing AceStream image (first run can take a while)…"))
+            DockerImage().task { error in
+                guard self.checker.isRunning else { return }
+                if let message = error?.errorDescription { return done(message) }
+
+                self.status.set(.working("Starting AceStream engine…"))
+                let launchedContainer = AceStreamEngine()
+                launchedContainer.task { error in
+                    guard self.checker.isRunning else { return }
+                    if let message = error?.errorDescription { return done(message) }
+                    self.engine = launchedContainer
+                    done(nil)
+                }
+            }
+        }
     }
 
     // MARK: - Playback
@@ -111,6 +191,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        checker.cancel() // Starting a stream restarts the engine, which would break a check.
         generation += 1
         let generation = self.generation
         status.activeLinkID = linkID
@@ -282,8 +363,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
            terminatedBundleIdentifier == launchedBundle.bundleIdentifier {
             os_log("Bundle %{public}@ terminated by user.", terminatedBundleIdentifier)
             self.launchedBundle = nil
-            stopAceStreamServer()
             status.activeLinkID = nil
+            if checker.isRunning {
+                return // The check still needs the engine; it stops it when done.
+            }
+            stopAceStreamServer()
             status.set(.idle)
         }
     }

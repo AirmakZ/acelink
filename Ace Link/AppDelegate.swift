@@ -6,8 +6,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var loading = LoadingIndicator()
     private var launchedBundle: Bundle?
     private var engine: AceStreamEngine?
+    private var channelsWindow: ChannelsWindowController?
+    private let status = PlaybackStatus.shared
+
+    /// Bumped every time a stream is opened or stopped. Callbacks from an older
+    /// attempt compare against it and bail out, so clicking another link (or Stop)
+    /// while one is still loading cancels the previous one.
+    private var generation = 0
 
     func applicationDidFinishLaunching(_: Notification) {
+        NSApp.mainMenu = AppMainMenu.build(target: self)
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.menu = MainMenu(title: "Ace Link")
 
@@ -23,6 +32,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             queue: OperationQueue.main,
             using: detectLaunchedBundleTerminated
         )
+
+        showChannelsWindow(nil)
+    }
+
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        showChannelsWindow(nil)
+        return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
+        false // Keep running in the menu bar.
     }
 
     func application(_: NSApplication, open urls: [URL]) {
@@ -41,11 +61,64 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         terminateLaunchedBundle()
     }
 
-    func openStream(_ stream: StreamFile) {
+    // MARK: - Channels window
+
+    @objc
+    func showChannelsWindow(_: Any?) {
+        if channelsWindow == nil {
+            channelsWindow = ChannelsWindowController(actions: PlaybackActions(
+                play: { [weak self] link in self?.play(link: link) },
+                playFromClipboard: { [weak self] in self?.playFromClipboard() },
+                stop: { [weak self] in self?.stopPlayback() }
+            ))
+        }
+        channelsWindow?.show()
+    }
+
+    func play(link: StreamLink) {
+        guard let stream = link.stream else {
+            status.set(.failed("“\(link.name)” is not a valid AceStream link."))
+            return
+        }
+        openStream(stream, linkID: link.id, displayName: link.name)
+    }
+
+    func playFromClipboard() {
+        guard let clip = NSPasteboard.general.string(forType: .string),
+              let stream = ExtractStream.from(unverifiedData: clip), !stream.hash.isEmpty
+        else {
+            status.set(.failed("No AceStream link found on the clipboard."))
+            return
+        }
+        openStream(stream)
+    }
+
+    func stopPlayback() {
+        generation += 1
+        loading.stop()
+        terminateLaunchedBundle()
+        stopAceStreamServer()
+        status.activeLinkID = nil
+        status.set(.idle)
+    }
+
+    // MARK: - Playback
+
+    func openStream(_ stream: StreamFile, linkID: UUID? = nil, displayName: String? = nil) {
+        if Process.runCommand("docker", "--version").terminationStatus != 0 {
+            fail("Docker is not installed. Install Docker Desktop from the menu bar icon.",
+                 generation: generation)
+            return
+        }
+
+        generation += 1
+        let generation = self.generation
+        status.activeLinkID = linkID
+
         terminateLaunchedBundle()
         os_log("Open stream: %{public}s=%s", stream.param, stream.hash)
 
-        startAceStreamEngine {
+        startAceStreamEngine(generation: generation) {
             os_log("Ace Stream engine ready.")
             let engine = self.engine!
 
@@ -54,11 +127,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // task communicate directly with the server.
                 os_log("No stream hash, leaving the engine running…")
                 self.loading.stop()
+                self.status.set(.idle)
                 return
             }
 
-            self.prepareStream(engine: engine, stream: stream) { stream in
-                self.launchStreamInEngine(engine: engine, stream: stream) { bundle, url in
+            self.prepareStream(engine: engine, stream: stream, generation: generation) { stream in
+                self.launchStreamInEngine(
+                    engine: engine, stream: stream, generation: generation
+                ) { bundle, url in
                     os_log(
                         "Launching %{public}@ with URL %s…",
                         bundle.debugDescription,
@@ -74,31 +150,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                     self.launchedBundle = bundle
                     self.loading.stop()
+                    let name = displayName.flatMap { $0.isEmpty ? nil : $0 } ?? stream.title
+                    self.status.set(.playing("\(name) — in \(bundle.name)"))
                 }
             }
+        }
+    }
+
+    /// Shows the error in the channels window (and as an alert if the window is closed).
+    func fail(_ message: String, generation: Int) {
+        guard generation == self.generation else { return }
+        loading.stop()
+        status.activeLinkID = nil
+        status.set(.failed(message))
+        if channelsWindow?.window?.isVisible != true {
+            NSAlert.error(message)
         }
     }
 
     func prepareStream(
         engine: AceStreamEngine,
         stream: StreamFile,
+        generation: Int,
         callback: @escaping (StreamFile) -> Void
     ) {
         os_log("Preparing stream…")
+        status.set(.working("Loading stream…"))
 
         let aceStreamPlaylist = AceStreamPlaylist(aceStreamEngine: engine, stream: stream)
         aceStreamPlaylist.task { error in
+            guard generation == self.generation else { return }
             if let message = error?.errorDescription {
-                self.loading.stop()
-                NSAlert.error(message)
+                self.fail(message, generation: generation)
                 return
             }
 
             os_log("Waiting for peers…")
+            self.status.set(.working("Waiting for peers…"))
             stream.waitForPeers { result in
+                guard generation == self.generation else { return }
                 if let message = result?.errorDescription {
-                    self.loading.stop()
-                    NSAlert.error(message)
+                    self.fail(message, generation: generation)
                     return
                 }
 
@@ -114,12 +206,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func launchStreamInEngine(
         engine: AceStreamEngine,
         stream: StreamFile,
+        generation: Int,
         callback: @escaping (Bundle, URL) -> Void
     ) {
         os_log("Starting server for opening acelink.m3u8 over http…")
+        status.set(.working("Opening player…"))
 
         guard let bundle = AppConfig.playerBundle else {
-            NSAlert.error("Cannot get player")
+            fail("Cannot get player. Choose one with “Change media player…” in the menu bar.",
+                 generation: generation)
             return
         }
 
@@ -129,9 +224,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         PlaylistServer(engine: engine, stream: stream).task { error in
+            guard generation == self.generation else { return }
             if let message = error?.errorDescription {
-                self.loading.stop()
-                NSAlert.error(message)
+                self.fail(message, generation: generation)
                 return
             }
 
@@ -139,31 +234,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func startAceStreamEngine(_ callback: @escaping () -> Void) {
+    func startAceStreamEngine(generation: Int, _ callback: @escaping () -> Void) {
         loading.start()
 
         os_log("Starting Docker…")
+        status.set(.working("Starting Docker…"))
         DockerEngine().task { error in
+            guard generation == self.generation else { return }
             if let message = error?.errorDescription {
-                self.loading.stop()
-                NSAlert.error(message)
+                self.fail(message, generation: generation)
                 return
             }
 
             os_log("Pulling Docker image…")
+            self.status.set(.working("Preparing AceStream image (first run can take a while)…"))
             DockerImage().task { error in
+                guard generation == self.generation else { return }
                 if let message = error?.errorDescription {
-                    self.loading.stop()
-                    NSAlert.error(message)
+                    self.fail(message, generation: generation)
                     return
                 }
 
                 os_log("Starting AceStream server…")
+                self.status.set(.working("Starting AceStream engine…"))
                 let launchedContainer = AceStreamEngine()
                 launchedContainer.task { error in
+                    guard generation == self.generation else { return }
                     if let message = error?.errorDescription {
-                        self.loading.stop()
-                        NSAlert.error(message)
+                        self.fail(message, generation: generation)
                         return
                     }
 
@@ -183,7 +281,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
            let terminatedBundleIdentifier = (app as? NSRunningApplication)?.bundleIdentifier,
            terminatedBundleIdentifier == launchedBundle.bundleIdentifier {
             os_log("Bundle %{public}@ terminated by user.", terminatedBundleIdentifier)
+            self.launchedBundle = nil
             stopAceStreamServer()
+            status.activeLinkID = nil
+            status.set(.idle)
         }
     }
 

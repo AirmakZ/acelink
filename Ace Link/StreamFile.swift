@@ -51,7 +51,13 @@ struct StreamFile {
 
     func waitForPeers(callback: @escaping (AppError?) -> Void) {
         getStreamInfo { streamInfo in
-            let statURL = URL(string: streamInfo.response.statURLString)!
+            guard let streamInfo = streamInfo,
+                  let statURL = URL(string: streamInfo.response.statURLString) else {
+                DispatchQueue.main.async {
+                    callback(AppError("Cannot get stream info. The link may be offline."))
+                }
+                return
+            }
             StreamPeers(statURL: statURL).task { result in
                 callback(result)
             }
@@ -66,15 +72,12 @@ struct StreamFile {
         }
     }
 
-    private func getStreamInfo(callback: @escaping (GetStreamInfoResponse) -> Void) {
+    private func getStreamInfo(callback: @escaping (GetStreamInfoResponse?) -> Void) {
         os_log("Getting stream session urls…")
         let urlSession = URLSession(configuration: .ephemeral)
         let url = streamURL.appendingQuery("format", "json")
         urlSession.jsonDataTask(with: url, decodable: GetStreamInfoResponse.self) { streamInfo in
-            if let streamInfo = streamInfo {
-                callback(streamInfo)
-                return
-            }
+            callback(streamInfo)
         }.resume()
     }
 }

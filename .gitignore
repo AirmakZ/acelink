@@ -17,3 +17,4 @@ builds
 
 # Backup files
 *~.nib
+build/

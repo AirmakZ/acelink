@@ -10,6 +10,12 @@ class MainMenu: NSMenu {
         SelectPlayerMenu()
     ]
 
+    let showChannelsItem = NSMenuItem(
+        title: "Show Channels…",
+        action: #selector(AppDelegate.showChannelsWindow(_:)),
+        keyEquivalent: "0"
+    )
+
     let openHelpDialogItem = NSMenuItem(
         title: "Help on opening streams…",
         action: #selector(openHelpDialog(_:)),
@@ -31,6 +37,9 @@ class MainMenu: NSMenu {
 
         autoenablesItems = false
         openHelpDialogItem.target = self
+        showChannelsItem.target = appDelegate
+        addItem(showChannelsItem)
+        addItem(NSMenuItem.separator())
 
         for partialMenu in partialMenus {
             for item in partialMenu.items {

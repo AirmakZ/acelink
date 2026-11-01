@@ -7,6 +7,26 @@ Ace Link is a menu bar app that allows playing Ace Streams on macOS.
 
 Play an Ace Stream or Magnet in any media player by pasting the URL in the Ace Link menu, or open an acestream or magnet link in Ace Link.
 
+## Channels (this fork)
+
+Ace Link now opens a window where you can organize your streams:
+
+- **Channels**: create a channel with a name and an icon (SF Symbol + color, an emoji, or your own image).
+- **Links**: each channel holds several AceStream links (hash, `acestream://…` or `magnet:`). Adding a link pre-fills it from your clipboard.
+- **Play**: click a link to start it. Ace Link starts Docker and the AceStream engine, then opens the stream in your media player (VLC by default). Progress is shown at the bottom of the window, with a Stop button.
+- Right-click channels and links to edit, copy, or delete them. Drag to reorder.
+
+Channels are saved in `~/Library/Application Support/Ace Link/channels.json`. The menu bar icon still works as before, and closing the window keeps Ace Link running in the menu bar.
+
+### Building without Xcode
+
+```sh
+scripts/build-app.sh            # builds build/Ace Link.app
+scripts/build-app.sh --install  # also copies it to /Applications
+```
+
+Requires macOS 13 or later and the Xcode Command Line Tools.
+
 ## [Download for macOS](https://github.com/blaise-io/acelink/releases/download/2.1.0/Ace.Link.2.1.0.dmg)
 
  - Install using HomeBrew: `brew install --cask ace-link`

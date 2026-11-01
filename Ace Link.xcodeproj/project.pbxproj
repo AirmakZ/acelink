@@ -58,6 +58,8 @@
 		32C0103F5667E6198C404080 /* ChannelsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */; };
 		9EA0DD7D1261E0CE76E55FE1 /* BulkLinkEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */; };
 		B4FDA7FD80CCE580EF66B85F /* LinkChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 821D95F03B599E39F091CC9E /* LinkChecker.swift */; };
+		8013427A04D2059C577EF22C /* TVShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD6B1198B376557547750934 /* TVShare.swift */; };
+		6D8790145A77518D2760CFB5 /* TVSharePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -115,6 +117,8 @@
 		89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelsWindowController.swift; sourceTree = "<group>"; };
 		CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BulkLinkEditor.swift; sourceTree = "<group>"; };
 		821D95F03B599E39F091CC9E /* LinkChecker.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LinkChecker.swift; sourceTree = "<group>"; };
+		DD6B1198B376557547750934 /* TVShare.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TVShare.swift; sourceTree = "<group>"; };
+		5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TVSharePanel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -229,6 +233,8 @@
 				59ECC785630B71AFCC2B8C36 /* ChannelsView.swift */,
 				9E68B4B7A76D1228A793AF73 /* ChannelEditor.swift */,
 				E34AB54268EDF65AD2F4FB37 /* LinkEditor.swift */,
+				5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */,
+				DD6B1198B376557547750934 /* TVShare.swift */,
 				821D95F03B599E39F091CC9E /* LinkChecker.swift */,
 				CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */,
 				89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */,
@@ -322,6 +328,8 @@
 				9D469EEE812D4E824D8978EA /* ChannelsView.swift in Sources */,
 				EC9FAAA6C1B4467EE3CF0982 /* ChannelEditor.swift in Sources */,
 				574AEBB4A19776D2E8A44943 /* LinkEditor.swift in Sources */,
+				6D8790145A77518D2760CFB5 /* TVSharePanel.swift in Sources */,
+				8013427A04D2059C577EF22C /* TVShare.swift in Sources */,
 				B4FDA7FD80CCE580EF66B85F /* LinkChecker.swift in Sources */,
 				9EA0DD7D1261E0CE76E55FE1 /* BulkLinkEditor.swift in Sources */,
 				32C0103F5667E6198C404080 /* ChannelsWindowController.swift in Sources */,

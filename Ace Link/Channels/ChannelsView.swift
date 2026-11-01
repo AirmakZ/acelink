@@ -14,6 +14,7 @@ struct PlaybackActions {
     var stop: () -> Void
     var checkAvailability: (UUID) -> Void
     var cancelCheck: () -> Void
+    var setTVSharing: (Bool) -> Void
 }
 
 /// View state for ChannelsView. (An ObservableObject instead of @State so the app
@@ -24,12 +25,14 @@ final class ChannelsUIState: ObservableObject {
     @Published var editingLink: LinkEditTarget?
     @Published var bulkAdd: BulkAddTarget?
     @Published var channelPendingDelete: Channel?
+    @Published var showTVPanel = false
 }
 
 struct ChannelsView: View {
     @ObservedObject var store: ChannelStore
     @ObservedObject var status: PlaybackStatus
     @ObservedObject var checker = LinkChecker.shared
+    @ObservedObject var tv = TVShare.shared
     let actions: PlaybackActions
 
     @StateObject private var ui = ChannelsUIState()
@@ -61,6 +64,18 @@ struct ChannelsView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    ui.showTVPanel.toggle()
+                } label: {
+                    Label("Share to TV", systemImage: tv.isEnabled ? "tv.fill" : "tv")
+                        .foregroundColor(tvColor)
+                }
+                .help("Watch your channels on a TV")
+                .popover(isPresented: $ui.showTVPanel, arrowEdge: .bottom) {
+                    TVSharePanel(tv: tv, onToggle: actions.setTVSharing)
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button(action: actions.playFromClipboard) {
                     Label("Play from Clipboard", systemImage: "doc.on.clipboard")
@@ -120,6 +135,14 @@ struct ChannelsView: View {
             if ui.selection == nil { ui.selection = store.channels.first?.id }
         }
         .frame(minWidth: 640, minHeight: 400)
+    }
+
+    private var tvColor: Color {
+        switch tv.state {
+        case .on: return .green
+        case .failed: return .orange
+        default: return .primary
+        }
     }
 
     private var sidebar: some View {

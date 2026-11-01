@@ -33,6 +33,8 @@ struct StreamFile {
         AppConstants.Docker.baseURL
             .appendingPathComponent("/ace/getstream")
             .appendingQuery(param, hash)
+            // A player id keeps this session separate from the TV's (see TVShare).
+            .appendingQuery("pid", "acelink-mac")
     }
 
     var m3uData: String {

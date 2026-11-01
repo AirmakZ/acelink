@@ -16,6 +16,12 @@ class MainMenu: NSMenu {
         keyEquivalent: "0"
     )
 
+    let shareToTVItem = NSMenuItem(
+        title: "Share to TV",
+        action: #selector(AppDelegate.toggleTVSharing(_:)),
+        keyEquivalent: ""
+    )
+
     let openHelpDialogItem = NSMenuItem(
         title: "Help on opening streams…",
         action: #selector(openHelpDialog(_:)),
@@ -39,6 +45,8 @@ class MainMenu: NSMenu {
         openHelpDialogItem.target = self
         showChannelsItem.target = appDelegate
         addItem(showChannelsItem)
+        shareToTVItem.target = appDelegate
+        addItem(shareToTVItem)
         addItem(NSMenuItem.separator())
 
         for partialMenu in partialMenus {
@@ -54,6 +62,7 @@ class MainMenu: NSMenu {
     }
 
     override func update() {
+        shareToTVItem.state = TVShare.shared.isEnabled ? .on : .off
         let canPlay = Process.runCommand("docker", "--version").terminationStatus == 0
         for menu in partialMenus {
             menu.update(canPlay: canPlay)

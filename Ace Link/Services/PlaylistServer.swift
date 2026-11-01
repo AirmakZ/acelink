@@ -16,7 +16,7 @@ class PlaylistServer: Service {
         let cmdInContainer = "echo '\(stream.m3uData)' > acelink.m3u8;" +
             "python3 -m http.server \(AppConstants.Docker.proxyPort)"
         _ = Process.runCommand(
-            "docker", "exec", "--detach", "--workdir=/acelink", engine.containerID!,
+            "docker", "exec", "--detach", "--workdir=/acelink", AppConstants.Docker.containerName,
             "sh", "-c", cmdInContainer
         )
     }

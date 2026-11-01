@@ -10,6 +10,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var channelsWindow: ChannelsWindowController?
     private let status = PlaybackStatus.shared
     private let checker = LinkChecker.shared
+    private let tv = TVShare.shared
+    private var tvWatchdog: Timer?
+    /// Callbacks waiting for a shared engine start (see ensureEngine).
+    private var engineWaiters: [(String?) -> Void] = []
 
     /// Bumped every time a stream is opened or stopped. Callbacks from an older
     /// attempt compare against it and bail out, so clicking another link (or Stop)
@@ -36,6 +40,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         showChannelsWindow(nil)
+
+        if tv.isEnabled {
+            setTVSharing(true)
+        }
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
@@ -73,7 +81,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 playFromClipboard: { [weak self] in self?.playFromClipboard() },
                 stop: { [weak self] in self?.stopPlayback() },
                 checkAvailability: { [weak self] in self?.checkAvailability(channelID: $0) },
-                cancelCheck: { [weak self] in self?.cancelCheck() }
+                cancelCheck: { [weak self] in self?.cancelCheck() },
+                setTVSharing: { [weak self] in self?.setTVSharing($0) }
             ))
         }
         channelsWindow?.show()
@@ -102,9 +111,119 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         generation += 1
         loading.stop()
         terminateLaunchedBundle()
-        stopAceStreamServer()
+        if !tv.isEnabled {
+            stopAceStreamServer()
+        }
         status.activeLinkID = nil
         status.set(.idle)
+    }
+
+    // MARK: - Share to TV
+
+    @objc
+    func toggleTVSharing(_: Any?) {
+        setTVSharing(!tv.isEnabled)
+    }
+
+    func setTVSharing(_ enabled: Bool) {
+        if enabled {
+            if let error = tv.enable() {
+                tv.set(.failed(error))
+                return
+            }
+            keepEngineRunningForTV()
+            tvWatchdog?.invalidate()
+            // Restart the engine if it dies (e.g. Docker restarted) while sharing.
+            tvWatchdog = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+                self?.keepEngineRunningForTV()
+            }
+        } else {
+            tvWatchdog?.invalidate()
+            tvWatchdog = nil
+            tv.disable()
+            if launchedBundle == nil, !checker.isRunning, !status.isBusy {
+                stopAceStreamServer()
+            }
+        }
+    }
+
+    private func keepEngineRunningForTV() {
+        guard tv.isEnabled, engineWaiters.isEmpty else { return }
+        if Process.runCommand("docker", "--version").terminationStatus != 0 {
+            tv.set(.failed("Docker is not installed."))
+            return
+        }
+        if tv.state != .on {
+            tv.set(.starting("Starting AceStream engine…"))
+        }
+        ensureEngine { error in
+            guard self.tv.isEnabled else { return }
+            self.tv.set(error.map { .failed($0) } ?? .on)
+        }
+    }
+
+    /// Makes sure an engine is running, reusing the current one if it responds.
+    /// Concurrent callers share a single start.
+    private func ensureEngine(_ done: @escaping (String?) -> Void) {
+        engineWaiters.append(done)
+        guard engineWaiters.count == 1 else { return }
+
+        let token = engine?.token
+        DispatchQueue.global().async {
+            let alive = token.map(Self.engineResponds) ?? false
+            DispatchQueue.main.async {
+                if alive {
+                    self.finishEngineWaiters(nil)
+                } else {
+                    self.bootEngine { self.finishEngineWaiters($0) }
+                }
+            }
+        }
+    }
+
+    private func finishEngineWaiters(_ error: String?) {
+        let waiters = engineWaiters
+        engineWaiters = []
+        waiters.forEach { $0(error) }
+    }
+
+    /// True when *our* engine answers: the page only loads with the token it was started with,
+    /// so an engine replaced by something else (e.g. another Ace Link copy) is detected.
+    private static func engineResponds(token: String) -> Bool {
+        let url = AppConstants.Docker.baseURL.appendingPathComponent("/webui/app/\(token)/server")
+        var ok = false
+        let done = DispatchSemaphore(value: 0)
+        URLSession(configuration: .ephemeral).dataTask(
+            with: URLRequest(url: url, timeoutInterval: 3)
+        ) { data, _, _ in
+            ok = data.map { String(decoding: $0, as: UTF8.self).contains("access_token") } ?? false
+            done.signal()
+        }.resume()
+        _ = done.wait(timeout: .now() + 4)
+        return ok
+    }
+
+    /// Starts Docker, pulls the image and starts a fresh engine container.
+    private func bootEngine(_ done: @escaping (String?) -> Void) {
+        func progress(_ message: String) {
+            if case .starting = tv.state { tv.set(.starting(message)) }
+            if case .working = status.state { status.set(.working(message)) }
+        }
+        progress("Starting Docker…")
+        DockerEngine().task { error in
+            if let message = error?.errorDescription { return done(message) }
+            progress("Preparing AceStream image (first run can take a while)…")
+            DockerImage().task { error in
+                if let message = error?.errorDescription { return done(message) }
+                progress("Starting AceStream engine…")
+                let launchedContainer = AceStreamEngine()
+                launchedContainer.task { error in
+                    if let message = error?.errorDescription { return done(message) }
+                    self.engine = launchedContainer
+                    done(nil)
+                }
+            }
+        }
     }
 
     // MARK: - Availability check
@@ -123,7 +242,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // If a stream is playing, use its engine instead of restarting it.
         let reuseEngine = launchedBundle != nil && engine != nil
-        let prepareEngine = reuseEngine ? { done in done(nil) } : startEngineForCheck
+        let prepareEngine: (@escaping (String?) -> Void) -> Void
+        if tv.isEnabled {
+            prepareEngine = ensureEngine // Never restart the engine while the TV may be using it.
+        } else if reuseEngine {
+            prepareEngine = { done in done(nil) }
+        } else {
+            prepareEngine = startEngineForCheck
+        }
 
         prepareEngine { error in
             guard self.checker.checkingChannelID == channelID else { return } // Cancelled.
@@ -155,7 +281,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func finishCheck() {
         guard launchedBundle == nil else { return }
         if case .working = status.state, status.activeLinkID != nil { return }
-        stopAceStreamServer()
+        if !tv.isEnabled {
+            stopAceStreamServer()
+        }
         status.set(.idle)
     }
 
@@ -191,7 +319,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        checker.cancel() // Starting a stream restarts the engine, which would break a check.
+        if !tv.isEnabled {
+            checker.cancel() // Starting a stream restarts the engine, which would break a check.
+        }
         generation += 1
         let generation = self.generation
         status.activeLinkID = linkID
@@ -324,6 +454,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func startAceStreamEngine(generation: Int, _ callback: @escaping () -> Void) {
         loading.start()
 
+        if tv.isEnabled {
+            // Share the running engine with the TV instead of restarting it.
+            status.set(.working("Starting AceStream engine…"))
+            ensureEngine { error in
+                guard generation == self.generation else { return }
+                if let message = error {
+                    self.fail(message, generation: generation)
+                    return
+                }
+                callback()
+            }
+            return
+        }
+
         os_log("Starting Docker…")
         status.set(.working("Starting Docker…"))
         DockerEngine().task { error in
@@ -372,6 +516,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             status.activeLinkID = nil
             if checker.isRunning {
                 return // The check still needs the engine; it stops it when done.
+            }
+            if tv.isEnabled {
+                status.set(.idle)
+                return // The TV still needs the engine.
             }
             stopAceStreamServer()
             status.set(.idle)

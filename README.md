@@ -18,6 +18,8 @@ Ace Link now opens a window where you can organize your streams:
 - **Play**: click a link to start it. Ace Link starts Docker and the AceStream engine, then opens the stream in your media player (VLC by default). Progress is shown at the bottom of the window, with a Stop button.
 - Right-click channels and links to edit, copy, or delete them. Drag to reorder.
 
+- **Share to TV**: the TV button in the toolbar (or "Share to TV" in the menu bar menu) serves all your channels as a playlist at `http://<your-mac-ip>:8765/acelink.m3u`. Add it once in an IPTV app on your TV (tested with m3u-ip.tv on a Samsung TV). While it's on, the AceStream engine keeps running and the Mac doesn't sleep. Playing on the Mac uses the same engine, so the TV keeps playing. Reserve your Mac's IP in your router so the address doesn't change.
+
 Channels are saved in `~/Library/Application Support/Ace Link/channels.json`. The menu bar icon still works as before, and closing the window keeps Ace Link running in the menu bar.
 
 ### Building without Xcode

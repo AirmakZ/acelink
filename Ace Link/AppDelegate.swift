@@ -262,7 +262,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.status.set(.working("Checking \(channel.links.count) links…"))
             }
             self.checker.run(channel: channel) { outcome in
-                let available = outcome.values.filter { $0 }.count
+                let available = outcome.values.filter { $0.rank == 0 }.count
                 os_log("Check done: %d of %d available.", available, outcome.count)
                 withAnimation {
                     ChannelStore.shared.sortLinks(in: channelID, by: outcome)

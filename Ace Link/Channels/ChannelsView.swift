@@ -333,9 +333,14 @@ struct AvailabilityDot: View {
             switch availability {
             case .checking:
                 ProgressView().controlSize(.mini)
-            case .available:
+            case let .available(kbps):
                 Circle().fill(Color.green).frame(width: 9, height: 9)
-                    .help("Available: peers found")
+                    .help("Working: downloading at \(kbps) KB/s")
+            case let .slow(kbps):
+                Circle().fill(Color.orange).frame(width: 9, height: 9)
+                    .help(kbps == 0
+                        ? "Peers found, but nothing is downloading (stalled)"
+                        : "Slow: only \(kbps) KB/s, likely to freeze")
             case .unavailable:
                 Circle().fill(Color.red).frame(width: 9, height: 9)
                     .help("Unavailable: no peers found")
@@ -380,9 +385,22 @@ struct LinkRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(link.name.isEmpty ? "Untitled link" : link.name)
                     .fontWeight(isActive ? .semibold : .regular)
-                Text(link.shortHash)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundColor(link.stream == nil ? .red : .secondary)
+                HStack(spacing: 6) {
+                    Text(link.shortHash)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundColor(link.stream == nil ? .red : .secondary)
+                    switch availability {
+                    case let .available(kbps):
+                        Text("\(kbps) KB/s").font(.caption).foregroundColor(.green)
+                    case let .slow(kbps):
+                        Text(kbps == 0 ? "stalled" : "\(kbps) KB/s · slow")
+                            .font(.caption).foregroundColor(.orange)
+                    case .unavailable:
+                        Text("no peers").font(.caption).foregroundColor(.red)
+                    default:
+                        EmptyView()
+                    }
+                }
             }
             Spacer()
         }

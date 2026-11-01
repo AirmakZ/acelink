@@ -97,17 +97,20 @@ final class TVShare: ObservableObject {
         connection.start(queue: queue)
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
             let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            let response = self.response(for: request)
-            connection.send(content: response, completion: .contentProcessed { _ in
-                connection.cancel()
-            })
+            self.respond(to: request) { response in
+                connection.send(content: response, completion: .contentProcessed { _ in
+                    connection.cancel()
+                })
+            }
         }
     }
 
-    private func response(for request: String) -> Data {
+    private func respond(to request: String, send: @escaping (Data) -> Void) {
         let lines = request.components(separatedBy: "\r\n")
         let parts = (lines.first ?? "").split(separator: " ")
-        let path = parts.count > 1 ? String(parts[1]).components(separatedBy: "?")[0] : "/"
+        let target = parts.count > 1 ? String(parts[1]) : "/"
+        let path = target.components(separatedBy: "?")[0]
+        let query = URLComponents(string: target)?.queryItems ?? []
 
         // Use the address the TV used to reach us, so stream URLs work for it too.
         let hostHeader = lines.first { $0.lowercased().hasPrefix("host:") }
@@ -118,17 +121,121 @@ final class TVShare: ObservableObject {
         if path == Self.playlistPath || path == "/" {
             let channels = DispatchQueue.main.sync { ChannelStore.shared.channels }
             let body = Self.playlist(channels: channels, host: host)
-            return Self.http(200, type: "audio/x-mpegurl; charset=utf-8", body: Data(body.utf8))
+            return send(Self.http(200, type: "audio/x-mpegurl; charset=utf-8", body: Data(body.utf8)))
+        }
+
+        if path.hasPrefix("/play/") {
+            let hop = query.first { $0.name == "hop" }?.value.flatMap(Int.init) ?? 0
+            return play(path: path, hop: hop, host: host, send: send)
         }
 
         if path.hasPrefix("/icons/") {
             let name = String(path.dropFirst("/icons/".count))
             if !name.contains("/"), !name.contains(".."),
                let data = try? Data(contentsOf: ChannelStore.iconsDir.appendingPathComponent(name)) {
-                return Self.http(200, type: "image/png", body: data)
+                return send(Self.http(200, type: "image/png", body: data))
             }
         }
-        return Self.http(404, type: "text/plain", body: Data("Not found".utf8))
+        send(Self.http(404, type: "text/plain", body: Data("Not found".utf8)))
+    }
+
+    // MARK: - Starting streams for the TV
+
+    // A cold stream can take 10–60 s before the engine answers, and TV players give up
+    // long before that (PLAYER_ERROR_CONNECTION_FAILED). So the TV asks us instead: we
+    // start the stream in the engine and, until it is ready, answer every few seconds
+    // with a redirect back to ourselves. Players follow redirects without timing out.
+    // Once ready, we redirect to the engine's own HLS playlist.
+
+    /// How long to hold each request before answering "ask again".
+    private static let holdSeconds: TimeInterval = 6
+    /// Redirects before giving up (≈ 50 s), so a dead link fails in reasonable time.
+    private static let maxHops = 8
+
+    private final class WarmUp {
+        let created = Date()
+        var readyPath: String?
+        var failed = false
+    }
+
+    /// Stream hash -> warm-up. Only touched on `queue`.
+    private var warmUps: [String: WarmUp] = [:]
+
+    private func play(path: String, hop: Int, host: String, send: @escaping (Data) -> Void) {
+        // Path: /play/<id|infohash>/<hash>.m3u8
+        let parts = path.split(separator: "/").map(String.init)
+        guard parts.count == 3, ["id", "infohash"].contains(parts[1]),
+              parts[2].hasSuffix(".m3u8") else {
+            return send(Self.http(404, type: "text/plain", body: Data("Not found".utf8)))
+        }
+        let param = parts[1]
+        let hash = String(parts[2].dropLast(".m3u8".count))
+        guard hash.range(of: "^[0-9a-fA-F]{40}$", options: .regularExpression) != nil else {
+            return send(Self.http(404, type: "text/plain", body: Data("Not found".utf8)))
+        }
+
+        let warmUp = warmUp(param: param, hash: hash, fresh: hop == 0)
+        let deadline = Date().addingTimeInterval(Self.holdSeconds)
+        os_log("TV asks for %{public}@ (attempt %d)", String(hash.prefix(7)), hop + 1)
+
+        func poll() {
+            if let readyPath = warmUp.readyPath {
+                send(Self.redirect(to: "http://\(host):\(AppConstants.Docker.enginePort)\(readyPath)"))
+            } else if warmUp.failed {
+                send(Self.http(502, type: "text/plain", body: Data("Stream unavailable".utf8)))
+            } else if Date() < deadline {
+                queue.asyncAfter(deadline: .now() + 0.25, execute: poll)
+            } else if hop < Self.maxHops {
+                send(Self.redirect(to: "http://\(host):\(Self.port)\(path)?hop=\(hop + 1)"))
+            } else {
+                send(Self.http(504, type: "text/plain", body: Data("Stream took too long".utf8)))
+            }
+        }
+        poll()
+    }
+
+    /// Starts (or reuses) loading a stream in the engine for the TV.
+    private func warmUp(param: String, hash: String, fresh: Bool) -> WarmUp {
+        if let existing = warmUps[hash],
+           !(fresh && (existing.failed || Date().timeIntervalSince(existing.created) > 30)) {
+            return existing
+        }
+        let warmUp = WarmUp()
+        warmUps[hash] = warmUp
+
+        var components = URLComponents(
+            url: AppConstants.Docker.baseURL.appendingPathComponent("/ace/manifest.m3u8"),
+            resolvingAgainstBaseURL: false
+        )!
+        components.queryItems = [
+            URLQueryItem(name: param, value: hash),
+            URLQueryItem(name: "pid", value: "acelink-tv")
+        ]
+        let request = URLRequest(
+            url: components.url!,
+            timeoutInterval: Self.holdSeconds * Double(Self.maxHops + 1)
+        )
+        // URLSession follows the engine's redirect to the session playlist and only
+        // returns once the engine has video ready.
+        URLSession(configuration: .ephemeral).dataTask(with: request) { data, response, _ in
+            let body = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            self.queue.async {
+                if let http = response as? HTTPURLResponse, http.statusCode == 200,
+                   body.contains("#EXTINF"), let url = http.url {
+                    warmUp.readyPath = url.path + (url.query.map { "?" + $0 } ?? "")
+                    os_log("TV stream %{public}@ ready", String(hash.prefix(7)))
+                } else {
+                    warmUp.failed = true
+                    os_log("TV stream %{public}@ failed", String(hash.prefix(7)))
+                }
+            }
+        }.resume()
+        return warmUp
+    }
+
+    private static func redirect(to location: String) -> Data {
+        Data(("HTTP/1.1 302 Found\r\nLocation: \(location)\r\n" +
+            "Content-Length: 0\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n").utf8)
     }
 
     static func playlist(channels: [Channel], host: String) -> String {
@@ -142,8 +249,7 @@ final class TVShare: ObservableObject {
             for link in channel.links {
                 guard let stream = link.stream else { continue }
                 let name = clean(link.name.isEmpty ? "Link" : link.name)
-                let url = "http://\(host):\(AppConstants.Docker.enginePort)/ace/manifest.m3u8"
-                    + "?\(stream.param)=\(stream.hash)&pid=acelink-tv"
+                let url = "http://\(host):\(port)/play/\(stream.param)/\(stream.hash).m3u8"
                 out += "#EXTINF:-1\(logo) group-title=\"\(group)\",\(group) · \(name)\n\(url)\n"
             }
         }
@@ -157,7 +263,8 @@ final class TVShare: ObservableObject {
     }
 
     private static func http(_ code: Int, type: String, body: Data) -> Data {
-        let reason = code == 200 ? "OK" : "Not Found"
+        let reasons = [200: "OK", 404: "Not Found", 502: "Bad Gateway", 504: "Gateway Timeout"]
+        let reason = reasons[code] ?? "Error"
         let header = "HTTP/1.1 \(code) \(reason)\r\n" +
             "Content-Type: \(type)\r\n" +
             "Content-Length: \(body.count)\r\n" +

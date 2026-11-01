@@ -325,6 +325,25 @@ struct ChannelDetailView: View {
     }
 }
 
+struct SpeedLabel: View {
+    let availability: Availability?
+
+    private var label: (text: String, color: Color)? {
+        switch availability {
+        case let .available(kbps)?: return ("\(kbps) KB/s", .green)
+        case let .slow(kbps)?: return (kbps == 0 ? "stalled" : "\(kbps) KB/s · slow", .orange)
+        case .unavailable?: return ("no peers", .red)
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        if let label = label {
+            Text(label.text).font(.caption).foregroundColor(label.color)
+        }
+    }
+}
+
 struct AvailabilityDot: View {
     let availability: Availability?
 
@@ -389,17 +408,7 @@ struct LinkRow: View {
                     Text(link.shortHash)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundColor(link.stream == nil ? .red : .secondary)
-                    switch availability {
-                    case let .available(kbps):
-                        Text("\(kbps) KB/s").font(.caption).foregroundColor(.green)
-                    case let .slow(kbps):
-                        Text(kbps == 0 ? "stalled" : "\(kbps) KB/s · slow")
-                            .font(.caption).foregroundColor(.orange)
-                    case .unavailable:
-                        Text("no peers").font(.caption).foregroundColor(.red)
-                    default:
-                        EmptyView()
-                    }
+                    SpeedLabel(availability: availability)
                 }
             }
             Spacer()

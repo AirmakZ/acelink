@@ -6,11 +6,14 @@ class AceStreamEngine: Service {
     var playlist: String?
     var containerID: String?
     let token = UUID().uuidString
+    private var runError: String?
 
     override var defaultError: String { "Cannot run AceStream server." }
 
     override init() {
-        _ = Process.runCommand("docker", "kill", AppConstants.Docker.containerName)
+        // `rm -f` waits until the old container is gone; `kill` doesn't, and the name
+        // would still be taken when the new container starts.
+        _ = Process.runCommand("docker", "rm", "--force", AppConstants.Docker.containerName)
         super.init()
     }
 
@@ -19,7 +22,6 @@ class AceStreamEngine: Service {
             "docker",
             "run",
             "--rm",
-            "--platform=\(AppConstants.Docker.platform)",
             "--detach",
             "--publish=\(AppConstants.Docker.enginePort):\(AppConstants.Docker.enginePort)",
             "--publish=\(AppConstants.Docker.proxyPort):\(AppConstants.Docker.proxyPort)",
@@ -34,15 +36,19 @@ class AceStreamEngine: Service {
             "-–vod-buffer=15",
             "--vod-cache-type=memory"
         )
-        if process.standardOutContents.isEmpty {
-            os_log("Cannot get engine ID...")
-            callback(nil)
+        if process.terminationStatus != 0 || process.standardOutContents.isEmpty {
+            os_log("Cannot start engine container: %{public}@", process.standardErrorContents)
+            runError = "Cannot start the AceStream engine container."
             return
         }
         containerID = process.standardOutContents
     }
 
     override func check() {
+        if let runError = runError {
+            callbackInMainThread(AppError(runError))
+            return
+        }
         let serverURL = AppConstants.Docker.baseURL
             .appendingPathComponent("/webui/app/\(token)/server")
         os_log("Check server up at %{public}@ …", serverURL.absoluteString)

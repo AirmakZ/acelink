@@ -40,7 +40,10 @@ struct StreamFile {
     }
 
     func addToHistory() {
-        let file = AppConfig.streamsDir.appendingPathComponent("\(title).m3u8")
+        // Engine titles can contain URLs; slashes would break the file name.
+        let safeTitle = title.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let file = AppConfig.streamsDir.appendingPathComponent("\(safeTitle).m3u8")
         os_log("Writing data file to %{public}s to maintain history.", file.path)
         do {
             try m3uData.write(to: file, atomically: false, encoding: .utf8)

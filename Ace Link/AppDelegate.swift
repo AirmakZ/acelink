@@ -212,7 +212,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            self.prepareStream(engine: engine, stream: stream, generation: generation) { stream in
+            self.prepareStream(
+                engine: engine, stream: stream, fallbackTitle: displayName, generation: generation
+            ) { stream in
                 self.launchStreamInEngine(
                     engine: engine, stream: stream, generation: generation
                 ) { bundle, url in
@@ -252,6 +254,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func prepareStream(
         engine: AceStreamEngine,
         stream: StreamFile,
+        fallbackTitle: String?,
         generation: Int,
         callback: @escaping (StreamFile) -> Void
     ) {
@@ -262,8 +265,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         aceStreamPlaylist.task { error in
             guard generation == self.generation else { return }
             if let message = error?.errorDescription {
-                self.fail(message, generation: generation)
-                return
+                // The title is only a label; carry on without it.
+                os_log("%{public}@ Continuing without title.", message)
             }
 
             os_log("Waiting for peers…")
@@ -276,7 +279,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 var stream = stream
-                stream.title = "\(aceStreamPlaylist.title!) [\(stream.hash.prefix(7))]"
+                let title = aceStreamPlaylist.title
+                    ?? fallbackTitle.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? "Stream"
+                stream.title = "\(title) [\(stream.hash.prefix(7))]"
                 stream.addToHistory()
 
                 callback(stream)

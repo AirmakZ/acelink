@@ -20,6 +20,7 @@ final class ChannelsUIState: ObservableObject {
     @Published var selection: UUID?
     @Published var editingChannel: Channel?
     @Published var editingLink: LinkEditTarget?
+    @Published var bulkAdd: BulkAddTarget?
     @Published var channelPendingDelete: Channel?
 }
 
@@ -43,7 +44,8 @@ struct ChannelsView: View {
                         status: status,
                         onPlay: actions.play,
                         onEditChannel: { ui.editingChannel = channel },
-                        onEditLink: { ui.editingLink = $0 }
+                        onEditLink: { ui.editingLink = $0 },
+                        onBulkAdd: { ui.bulkAdd = BulkAddTarget(id: channel.id) }
                     )
                 } else {
                     emptyDetail
@@ -82,6 +84,16 @@ struct ChannelsView: View {
                     ui.editingLink = nil
                 },
                 onCancel: { ui.editingLink = nil }
+            )
+        }
+        .sheet(item: $ui.bulkAdd) { target in
+            BulkLinkEditor(
+                existingLinks: store.channel(id: target.id)?.links ?? [],
+                onAdd: { links in
+                    store.add(links: links, to: target.id)
+                    ui.bulkAdd = nil
+                },
+                onCancel: { ui.bulkAdd = nil }
             )
         }
         .confirmationDialog(
@@ -126,6 +138,7 @@ struct ChannelsView: View {
                             channelID: channel.id, link: LinkEditor.draftFromClipboard(), isNew: true
                         )
                     }
+                    Button("Add Links in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
                     Divider()
                     Button("Delete Channel…") { ui.channelPendingDelete = channel }
                 }
@@ -177,6 +190,7 @@ struct ChannelDetailView: View {
     let onPlay: (StreamLink) -> Void
     let onEditChannel: () -> Void
     let onEditLink: (LinkEditTarget) -> Void
+    let onBulkAdd: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -187,7 +201,10 @@ struct ChannelDetailView: View {
                     Text("No links in this channel").font(.title3)
                     Text("Add an AceStream link (hash, acestream:// or magnet:).")
                         .foregroundColor(.secondary)
-                    Button("Add Link", action: addLink)
+                    HStack {
+                        Button("Add Link", action: addLink)
+                        Button("Add in Bulk…", action: onBulkAdd)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -239,6 +256,8 @@ struct ChannelDetailView: View {
             }
             Spacer()
             Button("Edit", action: onEditChannel)
+            Button("Add in Bulk…", action: onBulkAdd)
+                .keyboardShortcut("l", modifiers: [.command, .shift])
             Button(action: addLink) {
                 Label("Add Link", systemImage: "plus")
             }

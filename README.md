@@ -13,6 +13,7 @@ Ace Link now opens a window where you can organize your streams:
 
 - **Channels**: create a channel with a name and an icon (SF Symbol + color, an emoji, or your own image).
 - **Links**: each channel holds several AceStream links (hash, `acestream://…` or `magnet:`). Adding a link pre-fills it from your clipboard.
+- **Bulk add**: "Add in Bulk…" (⇧⌘L) takes many links at once, one per line, with an optional name on the same line (`HD Spanish acestream://…`). M3U playlists (`#EXTINF:-1,Name` + link) work too. Duplicates are skipped.
 - **Play**: click a link to start it. Ace Link starts Docker and the AceStream engine, then opens the stream in your media player (VLC by default). Progress is shown at the bottom of the window, with a Stop button.
 - Right-click channels and links to edit, copy, or delete them. Drag to reorder.
 

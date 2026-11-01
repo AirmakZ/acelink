@@ -100,6 +100,11 @@ final class ChannelStore: ObservableObject {
         }
     }
 
+    func add(links: [StreamLink], to channelID: UUID) {
+        guard let index = channels.firstIndex(where: { $0.id == channelID }) else { return }
+        channels[index].links.append(contentsOf: links)
+    }
+
     func delete(linkID: UUID, in channelID: UUID) {
         guard let index = channels.firstIndex(where: { $0.id == channelID }) else { return }
         channels[index].links.removeAll { $0.id == linkID }

@@ -12,6 +12,9 @@ enum Availability: Equatable {
     /// No peers: nobody is sharing it.
     case unavailable
 
+    /// Red: it won't play.
+    var isDead: Bool { rank == 3 }
+
     /// Sort order: working first, dead last.
     var rank: Int {
         switch self {

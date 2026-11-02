@@ -18,7 +18,17 @@ struct StreamFile {
     var hash: String
     var type: AppConstants.StreamType
     var title: String = "Unknown stream"
-    var playlistURL = URL(string: "http://127.0.0.1:\(AppConstants.Docker.proxyPort)/acelink.m3u8")!
+    /// Which Mac player this is for. Each stream playing at the same time gets its own
+    /// slot, so it gets its own engine session and playlist file.
+    var slot = 0
+
+    var playlistFileName: String {
+        slot == 0 ? "acelink.m3u8" : "acelink-\(slot).m3u8"
+    }
+
+    var playlistURL: URL {
+        URL(string: "http://127.0.0.1:\(AppConstants.Docker.proxyPort)/\(playlistFileName)")!
+    }
 
     var param: String {
         switch type {
@@ -33,8 +43,9 @@ struct StreamFile {
         AppConstants.Docker.baseURL
             .appendingPathComponent("/ace/getstream")
             .appendingQuery(param, hash)
-            // A player id keeps this session separate from the TV's (see TVShare).
-            .appendingQuery("pid", "acelink-mac")
+            // A player id keeps this session separate from the TV's (see TVShare) and
+            // from other streams playing on the Mac at the same time.
+            .appendingQuery("pid", slot == 0 ? "acelink-mac" : "acelink-mac-\(slot)")
     }
 
     var m3uData: String {

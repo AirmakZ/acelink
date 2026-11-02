@@ -11,6 +11,7 @@ final class TVShare: ObservableObject {
     static let port: UInt16 = 8765
     static let playlistPath = "/acelink.m3u"
     private static let enabledKey = "tvSharingEnabled"
+    private static let hideDeadLinksKey = "tvHideDeadLinks"
 
     enum State: Equatable {
         case off
@@ -21,6 +22,11 @@ final class TVShare: ObservableObject {
 
     @Published private(set) var state: State = .off
     @Published private(set) var isEnabled = UserDefaults.standard.bool(forKey: enabledKey)
+    /// Leave out links that were red in the last availability check.
+    @Published var hideDeadLinks = UserDefaults.standard.object(forKey: hideDeadLinksKey)
+        as? Bool ?? true {
+        didSet { UserDefaults.standard.set(hideDeadLinks, forKey: Self.hideDeadLinksKey) }
+    }
 
     private var listener: NWListener?
     private var sleepActivity: NSObjectProtocol?
@@ -119,8 +125,10 @@ final class TVShare: ObservableObject {
             ?? Self.localIPAddress() ?? "127.0.0.1"
 
         if path == Self.playlistPath || path == "/" {
-            let channels = DispatchQueue.main.sync { ChannelStore.shared.channels }
-            let body = Self.playlist(channels: channels, host: host)
+            let (channels, hidden) = DispatchQueue.main.sync {
+                (ChannelStore.shared.channels, hideDeadLinks ? Self.deadLinkIDs() : [])
+            }
+            let body = Self.playlist(channels: channels, host: host, hiding: hidden)
             return send(Self.http(200, type: "audio/x-mpegurl; charset=utf-8", body: Data(body.utf8)))
         }
 
@@ -238,7 +246,13 @@ final class TVShare: ObservableObject {
             "Content-Length: 0\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n").utf8)
     }
 
-    static func playlist(channels: [Channel], host: String) -> String {
+    /// Links that were red in the last check. Results last until Ace Link quits, and
+    /// checking the channel again brings back links that work again.
+    static func deadLinkIDs() -> Set<UUID> {
+        Set(LinkChecker.shared.results.filter { $0.value.isDead }.keys)
+    }
+
+    static func playlist(channels: [Channel], host: String, hiding hidden: Set<UUID> = []) -> String {
         var out = "#EXTM3U\n"
         for channel in channels {
             let group = clean(channel.name)
@@ -246,7 +260,7 @@ final class TVShare: ObservableObject {
             if case let .image(fileName) = channel.icon {
                 logo = " tvg-logo=\"http://\(host):\(port)/icons/\(fileName)\""
             }
-            for link in channel.links {
+            for link in channel.links where !hidden.contains(link.id) {
                 guard let stream = link.stream else { continue }
                 let name = clean(link.name.isEmpty ? "Link" : link.name)
                 let url = "http://\(host):\(port)/play/\(stream.param)/\(stream.hash).m3u8"

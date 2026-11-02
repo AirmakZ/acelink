@@ -13,10 +13,14 @@ class PlaylistServer: Service {
     }
 
     override func run() {
-        let cmdInContainer = "echo '\(stream.m3uData)' > acelink.m3u8;" +
+        // The playlist goes in through an environment variable, so quotes in the title
+        // can't break the shell command. The web server is started once per engine;
+        // when it already runs, the second one exits and the file is still served.
+        let cmdInContainer = "printf '%s\\n' \"$ACELINK_M3U\" > \(stream.playlistFileName);" +
             "python3 -m http.server \(AppConstants.Docker.proxyPort)"
         _ = Process.runCommand(
-            "docker", "exec", "--detach", "--workdir=/acelink", AppConstants.Docker.containerName,
+            "docker", "exec", "--detach", "--workdir=/acelink",
+            "--env=ACELINK_M3U=\(stream.m3uData)", AppConstants.Docker.containerName,
             "sh", "-c", cmdInContainer
         )
     }

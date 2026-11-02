@@ -2,10 +2,24 @@ import Cocoa
 import os
 import SwiftUI
 
+/// A stream playing on the Mac.
+private struct MacPlayer {
+    let slot: Int
+    let linkID: UUID?
+    let hash: String
+    let name: String
+    let bundle: Bundle
+    /// The player app instance, once it's running. Nil for browsers.
+    var app: NSRunningApplication?
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var loading = LoadingIndicator()
-    private var launchedBundle: Bundle?
+    /// Streams playing on the Mac. More than one with "Play Alongside".
+    private var players: [MacPlayer] = [] {
+        didSet { updatePlayingStatus() }
+    }
     private var engine: AceStreamEngine?
     private var channelsWindow: ChannelsWindowController?
     private let status = PlaybackStatus.shared
@@ -68,7 +82,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_: Notification) {
         stopAceStreamServer()
-        terminateLaunchedBundle()
+        terminatePlayers()
     }
 
     // MARK: - Channels window
@@ -78,6 +92,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if channelsWindow == nil {
             channelsWindow = ChannelsWindowController(actions: PlaybackActions(
                 play: { [weak self] link in self?.play(link: link) },
+                playAlongside: { [weak self] link in self?.play(link: link, alongside: true) },
                 playFromClipboard: { [weak self] in self?.playFromClipboard() },
                 stop: { [weak self] in self?.stopPlayback() },
                 checkAvailability: { [weak self] in self?.checkAvailability(channelID: $0) },
@@ -88,12 +103,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         channelsWindow?.show()
     }
 
-    func play(link: StreamLink) {
+    func play(link: StreamLink, alongside: Bool = false) {
         guard let stream = link.stream else {
             status.set(.failed("“\(link.name)” is not a valid AceStream link."))
             return
         }
-        openStream(stream, linkID: link.id, displayName: link.name)
+        if alongside, players.contains(where: { $0.hash == stream.hash }) {
+            // The engine sends a stream to one player only; a second one gets nothing.
+            status.set(.failed("“\(link.name)” is already playing."))
+            return
+        }
+        openStream(stream, linkID: link.id, displayName: link.name, alongside: alongside)
     }
 
     func playFromClipboard() {
@@ -110,7 +130,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         checker.cancel()
         generation += 1
         loading.stop()
-        terminateLaunchedBundle()
+        terminatePlayers()
         if !tv.isEnabled {
             stopAceStreamServer()
         }
@@ -141,7 +161,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             tvWatchdog?.invalidate()
             tvWatchdog = nil
             tv.disable()
-            if launchedBundle == nil, !checker.isRunning, !status.isBusy {
+            if players.isEmpty, !checker.isRunning, !status.isBusy {
                 stopAceStreamServer()
             }
         }
@@ -241,7 +261,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         checker.begin(channel: channel)
 
         // If a stream is playing, use its engine instead of restarting it.
-        let reuseEngine = launchedBundle != nil && engine != nil
+        let reuseEngine = !players.isEmpty && engine != nil
         let prepareEngine: (@escaping (String?) -> Void) -> Void
         if tv.isEnabled {
             prepareEngine = ensureEngine // Never restart the engine while the TV may be using it.
@@ -279,7 +299,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Stops the engine after a check, unless a stream is playing or loading.
     private func finishCheck() {
-        guard launchedBundle == nil else { return }
+        guard players.isEmpty else {
+            if case .working = status.state, status.activeLinkID == nil { status.dismiss() }
+            return
+        }
         if case .working = status.state, status.activeLinkID != nil { return }
         if !tv.isEnabled {
             stopAceStreamServer()
@@ -312,24 +335,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Playback
 
-    func openStream(_ stream: StreamFile, linkID: UUID? = nil, displayName: String? = nil) {
+    /// Opens a stream in the media player. Normally it replaces what's playing;
+    /// with `alongside` it plays next to it, in another player window.
+    func openStream(
+        _ stream: StreamFile, linkID: UUID? = nil, displayName: String? = nil,
+        alongside: Bool = false
+    ) {
         if Process.runCommand("docker", "--version").terminationStatus != 0 {
             fail("Docker is not installed. Install Docker Desktop from the menu bar icon.",
                  generation: generation)
             return
         }
 
-        if !tv.isEnabled {
+        // Alongside only makes sense when something is playing; otherwise just play.
+        let alongside = alongside && !players.isEmpty && engine != nil
+        if !tv.isEnabled, !alongside {
             checker.cancel() // Starting a stream restarts the engine, which would break a check.
         }
         generation += 1
         let generation = self.generation
         status.activeLinkID = linkID
 
-        terminateLaunchedBundle()
-        os_log("Open stream: %{public}s=%s", stream.param, stream.hash)
+        var stream = stream
+        if alongside {
+            let used = Set(players.map(\.slot))
+            stream.slot = (0...).first { !used.contains($0) }!
+        } else {
+            terminatePlayers()
+        }
+        os_log("Open stream: %{public}s=%s (slot %d)", stream.param, stream.hash, stream.slot)
 
-        startAceStreamEngine(generation: generation) {
+        startAceStreamEngine(generation: generation, reuse: alongside) {
             os_log("Ace Stream engine ready.")
             let engine = self.engine!
 
@@ -354,17 +390,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         url.debugDescription
                     )
 
-                    NSWorkspace.shared.open(
-                        [url], withAppBundleIdentifier: bundle.bundleIdentifier,
-                        options: [],
-                        additionalEventParamDescriptor: nil,
-                        launchIdentifiers: nil
-                    )
-
-                    self.launchedBundle = bundle
-                    self.loading.stop()
                     let name = displayName.flatMap { $0.isEmpty ? nil : $0 } ?? stream.title
-                    self.status.set(.playing("\(name) — in \(bundle.name)"))
+                    let slot = stream.slot
+                    self.players.append(
+                        MacPlayer(
+                            slot: slot, linkID: linkID, hash: stream.hash, name: name, bundle: bundle
+                        )
+                    )
+                    self.loading.stop()
+                    self.status.activeLinkID = nil
+                    self.status.set(.playing(self.status.nowPlaying ?? name))
+
+                    let config = NSWorkspace.OpenConfiguration()
+                    // A second stream needs its own player window: VLC would otherwise
+                    // replace the first stream with it.
+                    config.createsNewApplicationInstance = alongside && !bundle.isBrowser
+                    NSWorkspace.shared.open(
+                        [url], withApplicationAt: bundle.bundleURL, configuration: config
+                    ) { app, error in
+                        DispatchQueue.main.async {
+                            guard let index = self.players.firstIndex(where: { $0.slot == slot })
+                            else { return } // Stopped meanwhile.
+                            if let error = error {
+                                os_log("Cannot open player: %{public}@", error.localizedDescription)
+                            }
+                            if bundle.isBrowser { return }
+                            self.players[index].app = app
+                        }
+                    }
                 }
             }
         }
@@ -451,11 +504,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func startAceStreamEngine(generation: Int, _ callback: @escaping () -> Void) {
+    func startAceStreamEngine(generation: Int, reuse: Bool = false, _ callback: @escaping () -> Void) {
         loading.start()
 
-        if tv.isEnabled {
-            // Share the running engine with the TV instead of restarting it.
+        if tv.isEnabled || reuse {
+            // Share the running engine with the TV or the other streams instead of restarting it.
             status.set(.working("Starting AceStream engine…"))
             ensureEngine { error in
                 guard generation == self.generation else { return }
@@ -504,43 +557,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func detectLaunchedBundleTerminated(_ notification: Notification) {
-        guard let launchedBundle = launchedBundle else {
-            return
-        }
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+            as? NSRunningApplication,
+            let index = players.firstIndex(where: {
+                $0.app?.processIdentifier == app.processIdentifier
+            })
+        else { return }
 
-        if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey],
-           let terminatedBundleIdentifier = (app as? NSRunningApplication)?.bundleIdentifier,
-           terminatedBundleIdentifier == launchedBundle.bundleIdentifier {
-            os_log("Bundle %{public}@ terminated by user.", terminatedBundleIdentifier)
-            self.launchedBundle = nil
-            status.activeLinkID = nil
-            if checker.isRunning {
-                return // The check still needs the engine; it stops it when done.
-            }
-            if tv.isEnabled {
-                status.set(.idle)
-                return // The TV still needs the engine.
-            }
-            stopAceStreamServer()
+        os_log("Player %{public}@ closed by user.", app.bundleIdentifier ?? "?")
+        players.remove(at: index)
+        if !players.isEmpty || checker.isRunning {
+            return // Other streams (or the check) still need the engine.
+        }
+        if !tv.isEnabled {
+            stopAceStreamServer() // The TV would still need it.
+        }
+        if !status.isBusy {
             status.set(.idle)
         }
     }
 
-    func terminateLaunchedBundle() {
-        guard let launchedBundle = launchedBundle else {
-            return
+    /// Closes the player windows Ace Link opened.
+    func terminatePlayers() {
+        let running = players
+        players = []
+        for player in running {
+            if player.bundle.isBrowser {
+                // A browser may have other tabs open; leave it.
+                continue
+            }
+            if let app = player.app {
+                os_log("Terminate player: %{public}@", player.bundle.bundleIdentifier ?? "?")
+                app.terminate()
+            }
         }
-        if launchedBundle.isBrowser {
-            os_log("Launched bundle is browser which may have other tabs open, not terminating.")
-            self.launchedBundle = nil
-            return
-        }
+    }
 
-        for runningApplication in NSWorkspace.shared.runningApplications
-            where runningApplication.bundleIdentifier == launchedBundle.bundleIdentifier {
-            os_log("Terminate launched bundle: %{public}@", launchedBundle)
-            runningApplication.terminate()
-            self.launchedBundle = nil
+    /// Updates the status bar and the list highlights after streams start or stop.
+    private func updatePlayingStatus() {
+        status.playingLinkIDs = Set(players.compactMap(\.linkID))
+        switch players.count {
+        case 0: status.nowPlaying = nil
+        case 1: status.nowPlaying = "\(players[0].name) — in \(players[0].bundle.name)"
+        default: status.nowPlaying = players.map(\.name).joined(separator: " + ")
+        }
+        if case .playing = status.state {
+            status.dismiss()
         }
     }
 

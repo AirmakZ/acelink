@@ -10,6 +10,7 @@ struct LinkEditTarget: Identifiable {
 
 struct PlaybackActions {
     var play: (StreamLink) -> Void
+    var playAlongside: (StreamLink) -> Void
     var playFromClipboard: () -> Void
     var stop: () -> Void
     var checkAvailability: (UUID) -> Void
@@ -244,13 +245,21 @@ struct ChannelDetailView: View {
                     ForEach(channel.links) { link in
                         LinkRow(
                             link: link,
-                            isActive: status.activeLinkID == link.id,
-                            isBusy: status.isBusy,
+                            isLoading: status.activeLinkID == link.id && status.isBusy,
+                            isPlaying: status.playingLinkIDs.contains(link.id),
                             availability: checker.results[link.id],
-                            onPlay: { onPlay(link) }
+                            onPlay: {
+                                if NSEvent.modifierFlags.contains(.option) {
+                                    actions.playAlongside(link)
+                                } else {
+                                    onPlay(link)
+                                }
+                            }
                         )
                         .contextMenu {
                             Button("Play") { onPlay(link) }
+                            Button("Play Alongside") { actions.playAlongside(link) }
+                                .disabled(status.playingLinkIDs.isEmpty || status.isBusy)
                             Button("Edit Link…") {
                                 onEditLink(
                                     LinkEditTarget(channelID: channel.id, link: link, isNew: false)
@@ -381,8 +390,8 @@ final class HoverState: ObservableObject {
 
 struct LinkRow: View {
     let link: StreamLink
-    let isActive: Bool
-    let isBusy: Bool
+    let isLoading: Bool
+    let isPlaying: Bool
     let availability: Availability?
     let onPlay: () -> Void
 
@@ -391,9 +400,9 @@ struct LinkRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Group {
-                if isActive, isBusy {
+                if isLoading {
                     ProgressView().controlSize(.small)
-                } else if isActive {
+                } else if isPlaying {
                     Image(systemName: "speaker.wave.2.fill").foregroundColor(.accentColor)
                 } else {
                     Image(systemName: "play.circle.fill")
@@ -407,7 +416,7 @@ struct LinkRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(link.name.isEmpty ? "Untitled link" : link.name)
-                    .fontWeight(isActive ? .semibold : .regular)
+                    .fontWeight(isLoading || isPlaying ? .semibold : .regular)
                 HStack(spacing: 6) {
                     Text(link.shortHash)
                         .font(.system(.caption, design: .monospaced))
@@ -421,7 +430,7 @@ struct LinkRow: View {
         .contentShape(Rectangle())
         .onHover { hover.isHovering = $0 }
         .onTapGesture(perform: onPlay)
-        .help("Click to play in your media player")
+        .help("Click to play in your media player. ⌥-click to play alongside what's playing.")
     }
 }
 
@@ -452,7 +461,7 @@ struct StatusBar: View {
                     }
                     Spacer()
                     if case .failed = status.state {
-                        Button("Dismiss") { status.set(.idle) }
+                        Button("Dismiss") { status.dismiss() }
                     } else {
                         Button("Stop", action: onStop)
                     }

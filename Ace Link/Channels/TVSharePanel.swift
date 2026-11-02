@@ -2,6 +2,8 @@ import SwiftUI
 
 struct TVSharePanel: View {
     @ObservedObject var tv: TVShare
+    @ObservedObject var checker = LinkChecker.shared
+    @ObservedObject var store = ChannelStore.shared
     let onToggle: (Bool) -> Void
 
     var body: some View {
@@ -37,6 +39,8 @@ struct TVSharePanel: View {
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.1)))
                 }
 
+                hideDeadLinksToggle
+
                 Text("• The Mac won't sleep while this is on (the screen still can).\n" +
                     "• Playing a link on the Mac shares the same engine, so the TV keeps playing.\n" +
                     "• Changes to your channels show up when the TV app reloads the playlist.\n" +
@@ -48,6 +52,24 @@ struct TVSharePanel: View {
         }
         .padding(16)
         .frame(width: 420)
+    }
+
+    private var hiddenCount: Int {
+        let dead = TVShare.deadLinkIDs()
+        return store.channels.reduce(0) { $0 + $1.links.filter { dead.contains($0.id) }.count }
+    }
+
+    private var hideDeadLinksToggle: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle("Hide links that failed the last check", isOn: $tv.hideDeadLinks)
+            Text(tv.hideDeadLinks && hiddenCount > 0
+                ? "\(hiddenCount) red link\(hiddenCount == 1 ? " is" : "s are") hidden from the TV. " +
+                "Check the channel again to bring back links that work again."
+                : "Red links from Check Availability are left out of the TV playlist.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     @ViewBuilder

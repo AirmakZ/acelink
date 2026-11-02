@@ -26,6 +26,9 @@ class AceStreamEngine: Service {
             "--publish=\(AppConstants.Docker.enginePort):\(AppConstants.Docker.enginePort)",
             "--publish=\(AppConstants.Docker.proxyPort):\(AppConstants.Docker.proxyPort)",
             "--name=\(AppConstants.Docker.containerName)",
+            // The engine reads its hardware id from here and fails without it, which
+            // shows up as "Cannot get stream title" (blaise-io/acelink#100).
+            "--tmpfs=/dev/disk/by-id:rw,noexec,size=4k",
             AppConstants.Docker.image,
             "--client-console",
             "--access-token=\(token)",
@@ -33,7 +36,7 @@ class AceStreamEngine: Service {
             "--bind-all",
             "--live-buffer-time=15",
             "--live-cache-type=memory",
-            "-–vod-buffer=15",
+            "--vod-buffer=15",
             "--vod-cache-type=memory"
         )
         if process.terminationStatus != 0 || process.standardOutContents.isEmpty {

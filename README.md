@@ -1,6 +1,3 @@
-> [!WARNING]
-> Due to time constraints, I will not review issues or pull requests unless core functionality is broken for most users. I am open to transferring ownership of this project to contributors who have selflessly helped improving this project in 2025 or before. You are also welcome to fork the project. If a fork gains traction within the community, I will archive this project and link to the fork.
-
 # Ace Link
 
 Ace Link is a menu bar app that allows playing Ace Streams on macOS. 
@@ -38,7 +35,9 @@ Requires macOS 13 or later and the Xcode Command Line Tools.
 
 Requires Docker and macOS High Sierra (10.13) or later.
 
-<img src="acelink.png" width="350" alt="Ace Link" />
+<img width="660" height="400" alt="acelink-screenshot" src="https://github.com/user-attachments/assets/8d34c01f-a44f-4d79-8c66-cb6f27bc1fef" />
+<img width="441" height="336" alt="image" src="https://github.com/user-attachments/assets/e3fa5228-8f9e-4dd6-9ffb-99c2bfd53d88" />
+
 
 ### Media players
 

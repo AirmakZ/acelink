@@ -35,7 +35,9 @@ Requires macOS 13 or later and the Xcode Command Line Tools.
 
 Requires Docker and macOS High Sierra (10.13) or later.
 
-<img src="acelink.png" width="350" alt="Ace Link" />
+<img width="660" height="400" alt="acelink-screenshot" src="https://github.com/user-attachments/assets/8d34c01f-a44f-4d79-8c66-cb6f27bc1fef" />
+<img width="441" height="336" alt="image" src="https://github.com/user-attachments/assets/e3fa5228-8f9e-4dd6-9ffb-99c2bfd53d88" />
+
 
 ### Media players
 

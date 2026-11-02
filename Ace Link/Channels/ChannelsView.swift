@@ -332,6 +332,7 @@ struct SpeedLabel: View {
         switch availability {
         case let .available(kbps)?: return ("\(kbps) KB/s", .green)
         case let .slow(kbps)?: return (kbps == 0 ? "stalled" : "\(kbps) KB/s · slow", .orange)
+        case .noVideo?: return ("no video", .red)
         case .unavailable?: return ("no peers", .red)
         default: return nil
         }
@@ -358,8 +359,11 @@ struct AvailabilityDot: View {
             case let .slow(kbps):
                 Circle().fill(Color.orange).frame(width: 9, height: 9)
                     .help(kbps == 0
-                        ? "Peers found, but nothing is downloading (stalled)"
+                        ? "Video started, then stopped arriving (stalled)"
                         : "Slow: only \(kbps) KB/s, likely to freeze")
+            case .noVideo:
+                Circle().fill(Color.red).frame(width: 9, height: 9)
+                    .help("Unavailable: peers found, but no video arrived")
             case .unavailable:
                 Circle().fill(Color.red).frame(width: 9, height: 9)
                     .help("Unavailable: no peers found")

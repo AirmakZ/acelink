@@ -7,6 +7,9 @@ enum Availability: Equatable {
     case available(Int)
     /// Peers found but too slow to watch smoothly, or stalled (KB/s measured).
     case slow(Int)
+    /// Peers found, but no video arrived in time: it won't play.
+    case noVideo
+    /// No peers: nobody is sharing it.
     case unavailable
 
     /// Sort order: working first, dead last.
@@ -15,7 +18,7 @@ enum Availability: Equatable {
         case .available: return 0
         case .slow: return 1
         case .checking: return 2
-        case .unavailable: return 3
+        case .noVideo, .unavailable: return 3
         }
     }
 }
@@ -27,10 +30,12 @@ private struct GetStreamResponse: Decodable {
     struct Session: Decodable {
         let statURL: String
         let commandURL: String
+        let playbackURL: String
 
         enum CodingKeys: String, CodingKey {
             case statURL = "stat_url"
             case commandURL = "command_url"
+            case playbackURL = "playback_url"
         }
     }
 }
@@ -40,22 +45,20 @@ private struct StatResponse: Decodable {
 
     struct Stats: Decodable {
         let peers: Int?
-        let downloaded: Int?
     }
 }
 
 /// Checks all links of a channel at the same time against a running AceStream engine.
-/// A link is unavailable without peers. With peers, the real download speed is measured
-/// (the engine's own speed_down figure is a lagging average that can show hundreds of
-/// KB/s for a stream that downloads nothing), and slow or stalled links are flagged.
+/// Each link is opened and read like a player would, and the speed at which video
+/// arrives is measured. Links without video are dead; slow or stalled ones are flagged.
 final class LinkChecker: ObservableObject {
     static let shared = LinkChecker()
 
-    /// How long each link gets to find a peer.
+    /// How long each link gets to deliver its first video.
     static let timeout: TimeInterval = 45
     /// Below this the link is marked slow. Most live sports streams need 250–1000 KB/s.
     static let minimumKBps = 250
-    /// The first seconds after peers are found are a burst that fills the buffer; skip them.
+    /// The first seconds of video are the engine's buffer arriving all at once; skip them.
     static let warmUpSeconds: TimeInterval = 3
     static let measureSeconds: TimeInterval = 10
 
@@ -119,7 +122,9 @@ final class LinkChecker: ObservableObject {
 
     private static func measure(_ link: StreamLink) async -> Availability {
         guard let stream = link.stream else { return .unavailable }
-        let session = URLSession(configuration: .ephemeral)
+        let short = String(stream.hash.prefix(7))
+        let api = URLSession(configuration: .ephemeral)
+        defer { api.invalidateAndCancel() }
 
         // A unique player id lets the engine run all checks side by side.
         let url = AppConstants.Docker.baseURL
@@ -128,51 +133,95 @@ final class LinkChecker: ObservableObject {
             .appendingQuery("format", "json")
             .appendingQuery("pid", UUID().uuidString)
 
-        guard let (data, _) = try? await session.data(
+        guard let (data, _) = try? await api.data(
             for: URLRequest(url: url, timeoutInterval: timeout)
         ),
             let start = try? JSONDecoder().decode(GetStreamResponse.self, from: data),
             let streamSession = start.response,
-            let statURL = URL(string: streamSession.statURL)
+            let playbackURL = URL(string: streamSession.playbackURL)
         else {
-            os_log("Link %{public}@ did not start.", String(stream.hash.prefix(7)))
+            os_log("Link %{public}@ did not start.", short)
             return .unavailable
         }
 
-        func stats() async -> StatResponse.Stats? {
-            guard let (data, _) = try? await session.data(from: statURL) else { return nil }
-            return (try? JSONDecoder().decode(StatResponse.self, from: data))?.response
-        }
+        // Read the video like a player does. The engine stops downloading once its
+        // buffer (~10 MiB) is full and nobody reads it, so its own counters say little:
+        // a link can fill the buffer at full speed and then never deliver any video.
+        let reader = StreamReader()
+        let player = URLSession(configuration: .ephemeral, delegate: reader, delegateQueue: nil)
+        player.dataTask(with: URLRequest(url: playbackURL, timeoutInterval: timeout)).resume()
 
-        // 1. Wait for peers.
-        var hasPeers = false
+        var result: Availability
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline, !Task.isCancelled {
-            if let peers = await stats()?.peers, peers > 0 {
-                hasPeers = true
-                break
-            }
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        while reader.snapshot.firstByte == nil, !reader.snapshot.ended,
+              Date() < deadline, !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 250_000_000)
         }
 
-        // 2. Measure how much it really downloads.
-        var result = Availability.unavailable
-        if hasPeers, !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: UInt64(warmUpSeconds * 1_000_000_000))
-            let start = Date()
-            let startBytes = await stats()?.downloaded ?? 0
-            try? await Task.sleep(nanoseconds: UInt64(measureSeconds * 1_000_000_000))
-            let endBytes = await stats()?.downloaded ?? startBytes
-            let seconds = max(Date().timeIntervalSince(start), 1)
-            let kbps = Int(Double(max(endBytes - startBytes, 0)) / 1024 / seconds)
+        if let firstByte = reader.snapshot.firstByte {
+            // The first seconds are the buffered burst; skip them, then measure.
+            await sleep(until: firstByte.addingTimeInterval(warmUpSeconds))
+            let begin = reader.snapshot
+            await sleep(until: Date().addingTimeInterval(measureSeconds))
+            let end = reader.snapshot
+            let seconds = max(Date().timeIntervalSince(firstByte) - warmUpSeconds, 1)
+            let kbps = Int(Double(end.bytes - begin.bytes) / 1024 / seconds)
             result = kbps >= minimumKBps ? .available(kbps) : .slow(kbps)
+        } else {
+            // No video. Tell "nobody shares it" apart from "shared but not playable".
+            let peers = await stats(api, streamSession.statURL)?.peers ?? 0
+            result = peers > 0 ? .noVideo : .unavailable
         }
 
+        player.invalidateAndCancel()
         // Stop the test stream so it doesn't keep downloading.
         if let commandURL = URL(string: streamSession.commandURL) {
-            _ = try? await session.data(from: commandURL.appendingQuery("method", "stop"))
+            _ = try? await api.data(from: commandURL.appendingQuery("method", "stop"))
         }
-        os_log("Link %{public}@: %{public}@", String(stream.hash.prefix(7)), "\(result)")
+        os_log("Link %{public}@: %{public}@", short, "\(result)")
         return result
+    }
+
+    private static func sleep(until date: Date) async {
+        while Date() < date, !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: UInt64(min(date.timeIntervalSinceNow, 0.5) * 1e9))
+        }
+    }
+
+    private static func stats(_ session: URLSession, _ statURL: String) async -> StatResponse.Stats? {
+        guard let url = URL(string: statURL),
+              let (data, _) = try? await session.data(from: url) else { return nil }
+        return (try? JSONDecoder().decode(StatResponse.self, from: data))?.response
+    }
+}
+
+/// Counts the bytes of a stream as they arrive.
+private final class StreamReader: NSObject, URLSessionDataDelegate {
+    struct Snapshot {
+        var bytes = 0
+        var firstByte: Date?
+        var ended = false
+    }
+
+    private let lock = NSLock()
+    private var state = Snapshot()
+
+    var snapshot: Snapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return state
+    }
+
+    func urlSession(_: URLSession, dataTask _: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+        if state.firstByte == nil, !data.isEmpty { state.firstByte = Date() }
+        state.bytes += data.count
+    }
+
+    func urlSession(_: URLSession, task _: URLSessionTask, didCompleteWithError _: Error?) {
+        lock.lock()
+        defer { lock.unlock() }
+        state.ended = true
     }
 }

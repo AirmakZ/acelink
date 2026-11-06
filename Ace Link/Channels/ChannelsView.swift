@@ -14,6 +14,8 @@ struct PlaybackActions {
     var playFromClipboard: () -> Void
     var stop: () -> Void
     var checkAvailability: (UUID) -> Void
+    /// Checks a single link: channel ID, link ID.
+    var checkLink: (UUID, UUID) -> Void
     var cancelCheck: () -> Void
     var setTVSharing: (Bool) -> Void
 }
@@ -280,6 +282,9 @@ struct ChannelDetailView: View {
                             Button("Play") { onPlay(link) }
                             Button("Play Alongside") { actions.playAlongside(link) }
                                 .disabled(status.playingLinkIDs.isEmpty || status.isBusy)
+                            Button("Check Availability") { actions.checkLink(channel.id, link.id) }
+                                .disabled(link.stream == nil || checker.isRunning || status.isBusy)
+                            Divider()
                             Button("Edit Link…") {
                                 onEditLink(
                                     LinkEditTarget(channelID: channel.id, link: link, isNew: false)

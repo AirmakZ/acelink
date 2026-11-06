@@ -96,6 +96,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 playFromClipboard: { [weak self] in self?.playFromClipboard() },
                 stop: { [weak self] in self?.stopPlayback() },
                 checkAvailability: { [weak self] in self?.checkAvailability(channelID: $0) },
+                checkLink: { [weak self] in self?.checkAvailability(channelID: $0, linkID: $1) },
                 cancelCheck: { [weak self] in self?.cancelCheck() },
                 setTVSharing: { [weak self] in self?.setTVSharing($0) }
             ))
@@ -248,9 +249,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Availability check
 
-    func checkAvailability(channelID: UUID) {
-        guard let channel = ChannelStore.shared.channel(id: channelID), !channel.links.isEmpty,
+    /// Checks every link of a channel, or only `linkID` when given.
+    func checkAvailability(channelID: UUID, linkID: UUID? = nil) {
+        guard var channel = ChannelStore.shared.channel(id: channelID),
               !checker.isRunning, !status.isBusy else { return }
+        if let linkID = linkID {
+            channel.links = channel.links.filter { $0.id == linkID }
+        }
+        guard !channel.links.isEmpty else { return }
 
         if Process.runCommand("docker", "--version").terminationStatus != 0 {
             fail("Docker is not installed. Install Docker Desktop from the menu bar icon.",
@@ -279,13 +285,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             if !reuseEngine {
-                self.status.set(.working("Checking \(channel.links.count) links…"))
+                let count = channel.links.count
+                self.status.set(.working("Checking \(count) link\(count == 1 ? "" : "s")…"))
             }
             self.checker.run(channel: channel) { outcome in
                 let available = outcome.values.filter { $0.rank == 0 }.count
                 os_log("Check done: %d of %d available.", available, outcome.count)
-                withAnimation {
-                    ChannelStore.shared.sortLinks(in: channelID, by: outcome)
+                // A single link keeps its place; sorting only makes sense for the whole channel.
+                if linkID == nil {
+                    withAnimation {
+                        ChannelStore.shared.sortLinks(in: channelID, by: outcome)
+                    }
                 }
                 self.finishCheck()
             }

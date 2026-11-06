@@ -53,7 +53,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// while one is still loading cancels the previous one.
     private var generation = 0
 
+    /// Only one Ace Link may run. Copies share the single engine container but each starts
+    /// it with its own token, so each sees the other's engine as foreign and recreates it
+    /// (every 30 s while sharing to the TV), killing every stream and check. A second copy
+    /// (e.g. the Xcode build next to the installed one) brings the first one forward and quits.
+    func applicationWillFinishLaunching(_: Notification) {
+        guard let older = Self.olderRunningCopy() else { return }
+        os_log("Ace Link is already running (pid %d); switching to it.", older.processIdentifier)
+        guard let url = older.bundleURL else { exit(0) }
+        olderCopyURL = url
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        // Opening the running copy sends it a reopen event, which shows its channels window.
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in
+            // Give a stream link this copy was opened with time to arrive and be forwarded.
+            // Not NSApp.terminate: applicationWillTerminate would stop the engine and the
+            // players, which belong to the other copy.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }
+        }
+    }
+
+    /// Another running Ace Link that started before this one. The older one wins, so two
+    /// copies launched at the same moment don't both quit.
+    private static func olderRunningCopy() -> NSRunningApplication? {
+        let me = NSRunningApplication.current
+        guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != me.processIdentifier && !$0.isTerminated }
+            .first { other in
+                switch (other.launchDate, me.launchDate) {
+                case let (otherDate?, myDate?) where otherDate != myDate:
+                    return otherDate < myDate
+                default:
+                    return other.processIdentifier < me.processIdentifier
+                }
+            }
+    }
+
+    /// Set when another copy is already running and this one is about to quit: nothing
+    /// may start (menu bar item, TV server, engine) in the meantime.
+    private var olderCopyURL: URL?
+    private var isDuplicate: Bool { olderCopyURL != nil }
+
     func applicationDidFinishLaunching(_: Notification) {
+        guard !isDuplicate else { return }
         NSApp.mainMenu = AppMainMenu.build(target: self)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -80,6 +123,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        guard !isDuplicate else { return false }
         showChannelsWindow(nil)
         return true
     }
@@ -89,6 +133,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_: NSApplication, open urls: [URL]) {
+        if let olderCopyURL = olderCopyURL {
+            // A stream link opened this copy; the one already running plays it.
+            NSWorkspace.shared.open(
+                urls, withApplicationAt: olderCopyURL, configuration: NSWorkspace.OpenConfiguration()
+            )
+            return
+        }
         if Process.runCommand("docker", "--version").terminationStatus != 0 {
             return
         }
@@ -100,6 +151,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_: Notification) {
+        guard !isDuplicate else { return } // The engine belongs to the other copy.
         stopAceStreamServer()
         terminatePlayers()
     }

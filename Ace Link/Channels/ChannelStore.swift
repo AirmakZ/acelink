@@ -21,6 +21,9 @@ struct StreamLink: Codable, Identifiable, Equatable {
     var url: String
     /// The last time the link worked: a check found it green or orange, or it played.
     var lastSeen: Date?
+    /// The result of the last availability check, kept across launches so the list can
+    /// show the previous state (as a ring) until the link is checked again.
+    var lastResult: Availability?
 
     var stream: StreamFile? {
         guard let stream = ExtractStream.from(unverifiedData: url), !stream.hash.isEmpty else {
@@ -127,12 +130,26 @@ final class ChannelStore: ObservableObject {
 
     /// Records that a stream delivered video now, on every link that points to it.
     func markSeen(hash: String, at date: Date = Date()) {
+        updateLinks(hash: hash) { $0.lastSeen = date }
+    }
+
+    /// Saves a check result on every link that points to the stream. A working result
+    /// (green or orange) also updates "last seen".
+    func record(_ result: Availability, hash: String, at date: Date = Date()) {
+        guard result != .checking else { return }
+        updateLinks(hash: hash) { link in
+            link.lastResult = result
+            if result.rank <= Availability.slow(0).rank { link.lastSeen = date }
+        }
+    }
+
+    private func updateLinks(hash: String, _ change: (inout StreamLink) -> Void) {
         let hash = hash.lowercased()
         var updated = channels // Edit a copy so the file is saved once.
         for channelIndex in updated.indices {
             for linkIndex in updated[channelIndex].links.indices
                 where updated[channelIndex].links[linkIndex].stream?.hash.lowercased() == hash {
-                updated[channelIndex].links[linkIndex].lastSeen = date
+                change(&updated[channelIndex].links[linkIndex])
             }
         }
         if updated != channels { channels = updated }

@@ -269,10 +269,18 @@ final class TVShare: ObservableObject {
             "Content-Length: 0\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n").utf8)
     }
 
-    /// Links that were red in the last check. Results last until Ace Link quits, and
-    /// checking the channel again brings back links that work again.
+    /// Links that were red in their last check: this session's result, else the one saved
+    /// from an earlier launch. Checking the channel again brings back links that work again.
+    /// Call on the main thread.
     static func deadLinkIDs() -> Set<UUID> {
-        Set(LinkChecker.shared.results.filter { $0.value.isDead }.keys)
+        let current = LinkChecker.shared.results
+        var dead: Set<UUID> = []
+        for channel in ChannelStore.shared.channels {
+            for link in channel.links where (current[link.id] ?? link.lastResult)?.isDead == true {
+                dead.insert(link.id)
+            }
+        }
+        return dead
     }
 
     static func playlist(channels: [Channel], host: String, hiding hidden: Set<UUID> = []) -> String {

@@ -114,7 +114,10 @@ struct LinkEditor: View {
                     var saved = draft.link
                     saved.url = trimmedURL
                     saved.name = saved.name.trimmingCharacters(in: .whitespaces)
-                    if hash != originalHash { saved.lastSeen = nil }
+                    if hash != originalHash { // Both were about the old stream.
+                        saved.lastSeen = nil
+                        saved.lastResult = nil
+                    }
                     onSave(saved)
                 }
                 .keyboardShortcut(.defaultAction)

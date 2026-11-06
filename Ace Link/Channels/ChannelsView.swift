@@ -190,7 +190,10 @@ struct ChannelsView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer(minLength: 4)
-                    AvailabilityDot(availability: checker.bestResult(for: channel))
+                    AvailabilityDot(
+                        availability: checker.bestResult(for: channel),
+                        previous: checker.bestPreviousResult(for: channel)
+                    )
                 }
                 .padding(.vertical, 3)
                 .tag(channel.id)
@@ -381,31 +384,41 @@ struct SpeedLabel: View {
 
 struct AvailabilityDot: View {
     let availability: Availability?
+    /// A result from an earlier launch, shown as a ring while there is no current one.
+    var previous: Availability?
 
     var body: some View {
         Group {
-            switch availability {
-            case .checking:
+            if availability == .checking {
                 ProgressView().controlSize(.mini)
-            case let .available(kbps):
-                Circle().fill(Color.green).frame(width: 9, height: 9)
-                    .help("Working: downloading at \(kbps) KB/s")
-            case let .slow(kbps):
-                Circle().fill(Color.orange).frame(width: 9, height: 9)
-                    .help(kbps == 0
-                        ? "Video started, then stopped arriving (stalled)"
-                        : "Slow: only \(kbps) KB/s, likely to freeze")
-            case .noVideo:
-                Circle().fill(Color.red).frame(width: 9, height: 9)
-                    .help("Unavailable: peers found, but no video arrived")
-            case .unavailable:
-                Circle().fill(Color.red).frame(width: 9, height: 9)
-                    .help("Unavailable: no peers found")
-            case nil:
+            } else if let current = availability, let style = Self.style(current) {
+                Circle().fill(style.color).frame(width: 9, height: 9)
+                    .help(style.help)
+            } else if let previous = previous, let style = Self.style(previous) {
+                Circle().strokeBorder(style.color, lineWidth: 1.5).frame(width: 9, height: 9)
+                    .help("Last check: \(style.help)")
+            } else {
                 Color.clear
             }
         }
         .frame(width: 12, height: 12)
+    }
+
+    private static func style(_ availability: Availability) -> (color: Color, help: String)? {
+        switch availability {
+        case .checking:
+            return nil
+        case let .available(kbps):
+            return (.green, "Working: downloading at \(kbps) KB/s")
+        case let .slow(kbps):
+            return (.orange, kbps == 0
+                ? "Video started, then stopped arriving (stalled)"
+                : "Slow: only \(kbps) KB/s, likely to freeze")
+        case .noVideo:
+            return (.red, "Unavailable: peers found, but no video arrived")
+        case .unavailable:
+            return (.red, "Unavailable: no peers found")
+        }
     }
 }
 
@@ -437,7 +450,7 @@ struct LinkRow: View {
             .font(.system(size: 22))
             .frame(width: 26)
 
-            AvailabilityDot(availability: availability)
+            AvailabilityDot(availability: availability, previous: link.lastResult)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(link.name.isEmpty ? "Untitled link" : link.name)

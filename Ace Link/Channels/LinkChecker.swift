@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-enum Availability: Equatable {
+enum Availability: Equatable, Codable {
     case checking
     /// Peers found and downloading fast enough to watch (KB/s measured).
     case available(Int)
@@ -86,6 +86,11 @@ final class LinkChecker: ObservableObject {
         channel.links.compactMap { results[$0.id] }.min { $0.rank < $1.rank }
     }
 
+    /// Like `bestResult`, from the results saved by earlier checks (shown as a ring).
+    func bestPreviousResult(for channel: Channel) -> Availability? {
+        channel.links.compactMap(\.lastResult).min { $0.rank < $1.rank }
+    }
+
     /// Marks every link as "checking". Call before the engine is ready so the UI reacts at once.
     func begin(channel: Channel) {
         checkingChannelID = channel.id
@@ -130,9 +135,8 @@ final class LinkChecker: ObservableObject {
                     await MainActor.run {
                         guard self.checkingChannelID == channel.id else { return }
                         self.results[id] = result
-                        if result.rank <= Availability.slow(0).rank,
-                           let hash = links.first(where: { $0.id == id })?.stream?.hash {
-                            ChannelStore.shared.markSeen(hash: hash)
+                        if let hash = links.first(where: { $0.id == id })?.stream?.hash {
+                            ChannelStore.shared.record(result, hash: hash)
                         }
                     }
                 }

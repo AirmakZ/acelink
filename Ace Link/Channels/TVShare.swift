@@ -3,8 +3,9 @@ import Network
 import os
 
 /// "Share to TV": serves an M3U playlist of all channels on the local network so a TV
-/// app (e.g. m3u-ip.tv) can play them. The streams themselves come straight from the
-/// AceStream engine on port 6878, which AppDelegate keeps running while this is on.
+/// app (e.g. m3u-ip.tv) can play them. The streams come from the AceStream engine, which
+/// AppDelegate keeps running while this is on; their HLS playlists and segments are relayed
+/// through this server, so it knows which streams are still being watched (see `proxy`).
 final class TVShare: ObservableObject {
     static let shared = TVShare()
 
@@ -31,6 +32,10 @@ final class TVShare: ObservableObject {
     private var listener: NWListener?
     private var sleepActivity: NSObjectProtocol?
     private let queue = DispatchQueue(label: "acelink.tvshare")
+    /// Ends sessions nobody reads (see `sweepIdleSessions`).
+    private var sweeper: DispatchSourceTimer?
+    /// Fetches playlists and segments from the engine for the relay.
+    private let engineSession = URLSession(configuration: .ephemeral)
 
     var playlistURL: String {
         "http://\(Self.localIPAddress() ?? "<your-mac-ip>"):\(Self.port)\(Self.playlistPath)"
@@ -52,8 +57,10 @@ final class TVShare: ObservableObject {
         UserDefaults.standard.set(true, forKey: Self.enabledKey)
 
         if sleepActivity == nil {
+            // Latency-critical keeps App Nap from slowing down the relay of the video.
             sleepActivity = ProcessInfo.processInfo.beginActivity(
-                options: [.idleSystemSleepDisabled, .suddenTerminationDisabled],
+                options: [.userInitiated, .idleSystemSleepDisabled, .suddenTerminationDisabled,
+                          .latencyCritical],
                 reason: "Sharing streams to TV"
             )
         }
@@ -72,6 +79,8 @@ final class TVShare: ObservableObject {
         UserDefaults.standard.set(false, forKey: Self.enabledKey)
         listener?.cancel()
         listener = nil
+        sweeper?.cancel()
+        sweeper = nil
         if let activity = sleepActivity {
             ProcessInfo.processInfo.endActivity(activity)
             sleepActivity = nil
@@ -97,6 +106,12 @@ final class TVShare: ObservableObject {
         listener.start(queue: queue)
         self.listener = listener
         os_log("TV playlist server listening on port %d", Self.port)
+
+        let sweeper = DispatchSource.makeTimerSource(queue: queue)
+        sweeper.schedule(deadline: .now() + Self.sweepEvery, repeating: Self.sweepEvery)
+        sweeper.setEventHandler { [weak self] in self?.sweepIdleSessions() }
+        sweeper.resume()
+        self.sweeper = sweeper
     }
 
     private func handle(_ connection: NWConnection) {
@@ -116,6 +131,7 @@ final class TVShare: ObservableObject {
         let parts = (lines.first ?? "").split(separator: " ")
         let target = parts.count > 1 ? String(parts[1]) : "/"
         let path = target.components(separatedBy: "?")[0]
+        let rawQuery = target.contains("?") ? String(target.drop { $0 != "?" }.dropFirst()) : nil
         let query = URLComponents(string: target)?.queryItems ?? []
 
         // Use the address the TV used to reach us, so stream URLs work for it too.
@@ -137,6 +153,10 @@ final class TVShare: ObservableObject {
             return play(path: path, hop: hop, host: host, send: send)
         }
 
+        if path.hasPrefix("/hls/") {
+            return proxy(path: path, rawQuery: rawQuery, host: host, send: send)
+        }
+
         if path.hasPrefix("/icons/") {
             let name = String(path.dropFirst("/icons/".count))
             if !name.contains("/"), !name.contains(".."),
@@ -153,7 +173,7 @@ final class TVShare: ObservableObject {
     // long before that (PLAYER_ERROR_CONNECTION_FAILED). So the TV asks us instead: we
     // start the stream in the engine and, until it is ready, answer every few seconds
     // with a redirect back to ourselves. Players follow redirects without timing out.
-    // Once ready, we redirect to the engine's own HLS playlist.
+    // Once ready, we redirect to our relay of the engine's HLS playlist (see `proxy`).
 
     /// How long to hold each request before answering "ask again".
     private static let holdSeconds: TimeInterval = 6
@@ -168,10 +188,22 @@ final class TVShare: ObservableObject {
         var statURL: URL?
         /// The session's commands, to end it once nobody watches.
         var commandURL: URL?
-        /// A TV (not the Mac's own player) asked for this stream. Its session is then never
-        /// ended from the Mac: the TV may still be reading it.
-        var requestedByTV = false
+        /// Last time a player (the Mac's or a TV) read the stream through the relay.
+        var lastRead: Date?
+        /// Last time a TV read it. The Mac's player comes through 127.0.0.1; a TV uses the
+        /// Mac's network address.
+        var lastTVRead: Date?
+
+        func markRead(host: String) {
+            lastRead = Date()
+            if host != "127.0.0.1", host != "localhost" { lastTVRead = lastRead }
+        }
     }
+
+    /// A session nobody has read for this long is ended. The engine doesn't do it itself:
+    /// it keeps downloading and segmenting a stream nobody watches.
+    private static let idleSeconds: TimeInterval = 30
+    private static let sweepEvery: DispatchTimeInterval = .seconds(10)
 
     /// Stream hash -> warm-up. Only touched on `queue`.
     private var warmUps: [String: WarmUp] = [:]
@@ -190,14 +222,13 @@ final class TVShare: ObservableObject {
         }
 
         let warmUp = warmUp(param: param, hash: hash, fresh: hop == 0)
-        // The Mac's player comes through 127.0.0.1; a TV uses the Mac's network address.
-        if host != "127.0.0.1", host != "localhost" { warmUp.requestedByTV = true }
+        warmUp.markRead(host: host)
         let deadline = Date().addingTimeInterval(Self.holdSeconds)
         os_log("TV asks for %{public}@ (attempt %d)", String(hash.prefix(7)), hop + 1)
 
         func poll() {
-            if let readyPath = warmUp.readyPath {
-                send(Self.redirect(to: "http://\(host):\(AppConstants.Docker.enginePort)\(readyPath)"))
+            if warmUp.readyPath != nil {
+                send(Self.redirect(to: "http://\(host):\(Self.port)/hls/\(hash)/index.m3u8"))
             } else if warmUp.failed {
                 send(Self.http(502, type: "text/plain", body: Data("Stream unavailable".utf8)))
             } else if Date() < deadline {
@@ -211,25 +242,100 @@ final class TVShare: ObservableObject {
         poll()
     }
 
-    /// Streams the TV is (probably) watching: those whose engine session still answers.
-    /// The engine drops sessions nobody reads, so a stream the TV left soon disappears.
-    /// Blocks for up to a few seconds; don't call it on the main thread.
+    /// Streams being watched through the relay (on a TV or the Mac): read recently.
     func activeStreamHashes() -> Set<String> {
-        let ready = queue.sync { warmUps.compactMapValues(\.readyPath) }
-        var active: Set<String> = []
-        for (hash, path) in ready {
-            guard let url = URL(string: AppConstants.Docker.baseURL.absoluteString + path)
-            else { continue }
-            let done = DispatchSemaphore(value: 0)
-            URLSession(configuration: .ephemeral).dataTask(
-                with: URLRequest(url: url, timeoutInterval: 3)
-            ) { _, response, _ in
-                if (response as? HTTPURLResponse)?.statusCode == 200 { active.insert(hash) }
-                done.signal()
-            }.resume()
-            _ = done.wait(timeout: .now() + 4)
+        queue.sync {
+            Set(warmUps.filter { _, warmUp in
+                warmUp.readyPath != nil
+                    && Date().timeIntervalSince(warmUp.lastRead ?? warmUp.created) < Self.idleSeconds
+            }.keys)
         }
-        return active
+    }
+
+    // MARK: - HLS relay
+
+    // Players read a stream's playlist and segments through us rather than straight from
+    // the engine. That costs a local hop, but it is the only way to know whether anyone is
+    // still watching: the engine has no API for it, and keeps a session it isn't asked
+    // about downloading forever. Paths:
+    //   /hls/<hash>/index.m3u8          the session's playlist, segment URLs rewritten
+    //   /hls/<hash>/seg/ace/...         a segment, fetched from the same engine path
+
+    private func proxy(path: String, rawQuery: String?, host: String, send: @escaping (Data) -> Void) {
+        let rest = path.dropFirst("/hls/".count)
+        guard let slash = rest.firstIndex(of: "/") else { return send(Self.notFound) }
+        let hash = String(rest[..<slash]).lowercased()
+        let tail = String(rest[rest.index(after: slash)...])
+        guard let warmUp = warmUps[hash], let readyPath = warmUp.readyPath,
+              let playlistURL = URL(string: AppConstants.Docker.baseURL.absoluteString + readyPath)
+        else {
+            // The session ended. Players then ask for the channel again (/play/...).
+            return send(Self.notFound)
+        }
+        warmUp.markRead(host: host)
+
+        if tail == "index.m3u8" {
+            relay(playlistURL, hash: hash, send: send) { body in
+                Data(Self.rewrite(playlist: String(decoding: body, as: UTF8.self),
+                                  from: playlistURL, hash: hash).utf8)
+            }
+        } else if tail.hasPrefix("seg/ace/"),
+                  let segmentURL = URL(string: AppConstants.Docker.baseURL.absoluteString
+                      + "/" + tail.dropFirst("seg/".count) + (rawQuery.map { "?" + $0 } ?? "")) {
+            relay(segmentURL, hash: hash, send: send, type: "video/mp2t")
+        } else {
+            send(Self.notFound)
+        }
+    }
+
+    /// Fetches `url` from the engine and passes it on, after `transform` if given.
+    private func relay(
+        _ url: URL, hash: String, send: @escaping (Data) -> Void,
+        type: String = "application/vnd.apple.mpegurl", transform: ((Data) -> Data)? = nil
+    ) {
+        engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 502
+            guard status == 200, let data = data else {
+                if status == 404 { self.forgetSession(hash: hash) } // The engine dropped it.
+                return send(Self.http(status == 404 ? 404 : 502, type: "text/plain",
+                                      body: Data("Stream unavailable".utf8)))
+            }
+            send(Self.http(200, type: type, body: transform?(data) ?? data))
+        }.resume()
+    }
+
+    /// Points every segment of an engine playlist at the relay.
+    static func rewrite(playlist: String, from playlistURL: URL, hash: String) -> String {
+        playlist.components(separatedBy: "\n").map { line -> String in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#"),
+                  let url = URL(string: trimmed, relativeTo: playlistURL)?.absoluteURL
+            else { return line }
+            return "/hls/\(hash)/seg\(url.path)" + (url.query.map { "?" + $0 } ?? "")
+        }.joined(separator: "\n")
+    }
+
+    /// Ends the sessions nobody has read for `idleSeconds`, and forgets failed warm-ups.
+    private func sweepIdleSessions() {
+        let now = Date()
+        for (hash, warmUp) in warmUps {
+            if warmUp.failed, now.timeIntervalSince(warmUp.created) > 60 {
+                warmUps[hash] = nil
+                continue
+            }
+            guard warmUp.readyPath != nil,
+                  now.timeIntervalSince(warmUp.lastRead ?? warmUp.created) > Self.idleSeconds
+            else { continue }
+            os_log("Nobody watches %{public}@ any more; ending its session.", String(hash.prefix(7)))
+            end(warmUp, hash: hash)
+        }
+    }
+
+    /// Ends a stream's engine session and forgets it. Only touch on `queue`.
+    private func end(_ warmUp: WarmUp, hash: String) {
+        warmUps[hash] = nil
+        guard let command = warmUp.commandURL else { return }
+        engineSession.dataTask(with: command.appendingQuery("method", "stop")).resume()
     }
 
     /// The engine keeps one session per stream, and one stream per player id: asking for a
@@ -253,8 +359,9 @@ final class TVShare: ObservableObject {
             return existing
         }
         let warmUp = WarmUp()
-        // A TV that asked before still counts after the warm-up is renewed.
-        warmUp.requestedByTV = warmUps[hash]?.requestedByTV ?? false
+        // Reads before the warm-up was renewed still count.
+        warmUp.lastRead = warmUps[hash]?.lastRead
+        warmUp.lastTVRead = warmUps[hash]?.lastTVRead
         warmUps[hash] = warmUp
         // A check testing this stream would cut the TV's session, and a check testing
         // every link at once would starve it.
@@ -326,17 +433,19 @@ final class TVShare: ObservableObject {
         queue.async { self.warmUps[hash] = nil }
     }
 
-    /// Ends a stream's shared session when the Mac stops playing it, unless a TV asked for
-    /// it (the TV may still be watching; the engine drops the session once nobody reads it).
+    /// Ends a stream's shared session right away when the Mac stops playing it, unless a
+    /// TV read it recently. If a TV was watching, the idle sweep ends it once the TV stops.
     func endSessionIfUnused(hash: String) {
         queue.async {
-            guard let warmUp = self.warmUps[hash], !warmUp.requestedByTV else { return }
-            self.warmUps[hash] = nil
-            guard let command = warmUp.commandURL else { return }
+            guard let warmUp = self.warmUps[hash] else { return }
+            if let tvRead = warmUp.lastTVRead,
+               Date().timeIntervalSince(tvRead) < Self.idleSeconds { return }
             os_log("Ending shared session of %{public}@", String(hash.prefix(7)))
-            URLSession.shared.dataTask(with: command.appendingQuery("method", "stop")).resume()
+            self.end(warmUp, hash: hash)
         }
     }
+
+    private static let notFound = http(404, type: "text/plain", body: Data("Not found".utf8))
 
     private static func redirect(to location: String) -> Data {
         Data(("HTTP/1.1 302 Found\r\nLocation: \(location)\r\n" +

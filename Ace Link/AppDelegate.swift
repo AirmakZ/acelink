@@ -249,6 +249,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Availability check
 
+    /// Links tested at the same time while something plays, so the check doesn't
+    /// starve it of bandwidth and engine time. With nothing playing, all at once.
+    private static let checkConcurrencyWhilePlaying = 3
+
     /// Checks every link of a channel, or only `linkID` when given.
     func checkAvailability(channelID: UUID, linkID: UUID? = nil) {
         guard var channel = ChannelStore.shared.channel(id: channelID),
@@ -262,6 +266,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             fail("Docker is not installed. Install Docker Desktop from the menu bar icon.",
                  generation: generation)
             return
+        }
+
+        let macHashes = Set(players.map { $0.hash.lowercased() })
+        let sharing = tv.isEnabled
+        DispatchQueue.global().async {
+            let tvHashes = sharing ? self.tv.activeStreamHashes() : []
+            DispatchQueue.main.async {
+                self.startCheck(
+                    channel: channel, singleLink: linkID != nil, playing: macHashes.union(tvHashes)
+                )
+            }
+        }
+    }
+
+    /// Streams playing on the Mac or the TV are left out: testing one opens another
+    /// session for it, and the engine sends a stream to one session only.
+    private func startCheck(channel: Channel, singleLink: Bool, playing: Set<String>) {
+        guard !checker.isRunning, !status.isBusy else { return }
+        var channel = channel
+        let channelID = channel.id
+        channel.links.removeAll { link in
+            link.stream.map { playing.contains($0.hash.lowercased()) } ?? false
+        }
+        if channel.links.isEmpty {
+            status.set(.failed(singleLink
+                ? "This link is playing. Checking it now would interrupt it."
+                : "All links of this channel are playing. Checking them would interrupt them."))
+            return
+        }
+        if !playing.isEmpty {
+            os_log("Leaving %d playing stream(s) out of the check.", playing.count)
         }
 
         checker.begin(channel: channel)
@@ -288,11 +323,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let count = channel.links.count
                 self.status.set(.working("Checking \(count) link\(count == 1 ? "" : "s")…"))
             }
-            self.checker.run(channel: channel) { outcome in
+            let maxConcurrent = playing.isEmpty ? Int.max : Self.checkConcurrencyWhilePlaying
+            self.checker.run(channel: channel, maxConcurrent: maxConcurrent) { outcome in
                 let available = outcome.values.filter { $0.rank == 0 }.count
                 os_log("Check done: %d of %d available.", available, outcome.count)
                 // A single link keeps its place; sorting only makes sense for the whole channel.
-                if linkID == nil {
+                if !singleLink {
                     withAnimation {
                         ChannelStore.shared.sortLinks(in: channelID, by: outcome)
                     }
@@ -361,6 +397,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let alongside = alongside && !players.isEmpty && engine != nil
         if !tv.isEnabled, !alongside {
             checker.cancel() // Starting a stream restarts the engine, which would break a check.
+        } else {
+            checker.drop(hash: stream.hash) // Its test session would cut it as soon as it plays.
         }
         generation += 1
         let generation = self.generation

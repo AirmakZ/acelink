@@ -202,6 +202,27 @@ final class TVShare: ObservableObject {
         poll()
     }
 
+    /// Streams the TV is (probably) watching: those whose engine session still answers.
+    /// The engine drops sessions nobody reads, so a stream the TV left soon disappears.
+    /// Blocks for up to a few seconds; don't call it on the main thread.
+    func activeStreamHashes() -> Set<String> {
+        let ready = queue.sync { warmUps.compactMapValues(\.readyPath) }
+        var active: Set<String> = []
+        for (hash, path) in ready {
+            guard let url = URL(string: AppConstants.Docker.baseURL.absoluteString + path)
+            else { continue }
+            let done = DispatchSemaphore(value: 0)
+            URLSession(configuration: .ephemeral).dataTask(
+                with: URLRequest(url: url, timeoutInterval: 3)
+            ) { _, response, _ in
+                if (response as? HTTPURLResponse)?.statusCode == 200 { active.insert(hash) }
+                done.signal()
+            }.resume()
+            _ = done.wait(timeout: .now() + 4)
+        }
+        return active
+    }
+
     /// Starts (or reuses) loading a stream in the engine for the TV.
     private func warmUp(param: String, hash: String, fresh: Bool) -> WarmUp {
         if let existing = warmUps[hash],
@@ -210,6 +231,8 @@ final class TVShare: ObservableObject {
         }
         let warmUp = WarmUp()
         warmUps[hash] = warmUp
+        // A check testing this stream would cut the TV's session.
+        DispatchQueue.main.async { LinkChecker.shared.drop(hash: hash) }
 
         var components = URLComponents(
             url: AppConstants.Docker.baseURL.appendingPathComponent("/ace/manifest.m3u8"),

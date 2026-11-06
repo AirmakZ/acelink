@@ -71,6 +71,11 @@ final class LinkChecker: ObservableObject {
     @Published private(set) var checkingChannelID: UUID?
 
     private var task: Task<Void, Never>?
+    /// Links taken out of the running check because they started playing: their test
+    /// session would cut the player's (the engine sends a stream to one session only).
+    private let dropped = LockedSet()
+    /// The links of the running check, to find them by stream.
+    private var checkingLinks: [StreamLink] = []
 
     var isRunning: Bool { checkingChannelID != nil }
 
@@ -84,26 +89,43 @@ final class LinkChecker: ObservableObject {
     /// Marks every link as "checking". Call before the engine is ready so the UI reacts at once.
     func begin(channel: Channel) {
         checkingChannelID = channel.id
+        checkingLinks = channel.links
         for link in channel.links {
             results[link.id] = .checking
         }
     }
 
-    /// Runs the checks. `completion` gets link ID -> result, on the main thread,
-    /// unless the check was cancelled.
-    func run(channel: Channel, completion: @escaping ([UUID: Availability]) -> Void) {
+    /// Runs the checks, at most `maxConcurrent` links at a time. `completion` gets link
+    /// ID -> result, on the main thread, unless the check was cancelled.
+    func run(
+        channel: Channel, maxConcurrent: Int = .max,
+        completion: @escaping ([UUID: Availability]) -> Void
+    ) {
         let links = channel.links
-        os_log("Checking %d links of channel %{public}@…", links.count, channel.name)
+        let dropped = self.dropped
+        dropped.removeAll()
+        os_log("Checking %d links of channel %{public}@ (%d at a time)…",
+               links.count, channel.name, min(maxConcurrent, links.count))
 
         task = Task {
             let outcome = await withTaskGroup(
-                of: (UUID, Availability).self
+                of: (UUID, Availability?).self
             ) { group -> [UUID: Availability] in
-                for link in links {
-                    group.addTask { (link.id, await Self.measure(link)) }
+                var pending = links[...]
+                func startNext() {
+                    guard let link = pending.popFirst() else { return }
+                    group.addTask {
+                        if dropped.contains(link.id) { return (link.id, nil) }
+                        let result = await Self.measure(link) { dropped.contains(link.id) }
+                        return (link.id, dropped.contains(link.id) ? nil : result)
+                    }
                 }
+                for _ in 0..<min(maxConcurrent, links.count) { startNext() }
+
                 var outcome: [UUID: Availability] = [:]
                 for await (id, result) in group {
+                    startNext()
+                    guard let result = result else { continue } // Dropped.
                     outcome[id] = result
                     await MainActor.run {
                         guard self.checkingChannelID == channel.id else { return }
@@ -126,6 +148,19 @@ final class LinkChecker: ObservableObject {
         }
     }
 
+    /// Takes a stream out of the running check because it is about to play.
+    func drop(hash: String) {
+        guard isRunning else { return }
+        let hash = hash.lowercased()
+        for link in checkingLinks
+            where link.stream?.hash.lowercased() == hash && results[link.id] == .checking {
+            os_log("Leaving %{public}@ out of the check: it is starting to play.",
+                   String(hash.prefix(7)))
+            dropped.insert(link.id)
+            results[link.id] = nil
+        }
+    }
+
     func cancel() {
         guard isRunning else { return }
         task?.cancel()
@@ -134,7 +169,10 @@ final class LinkChecker: ObservableObject {
         results = results.filter { $0.value != .checking }
     }
 
-    private static func measure(_ link: StreamLink) async -> Availability {
+    /// `stop` ends the test early (its result is then ignored).
+    private static func measure(
+        _ link: StreamLink, stop: @escaping () -> Bool
+    ) async -> Availability {
         guard let stream = link.stream else { return .unavailable }
         let short = String(stream.hash.prefix(7))
         let api = URLSession(configuration: .ephemeral)
@@ -168,15 +206,15 @@ final class LinkChecker: ObservableObject {
         var result: Availability
         let deadline = Date().addingTimeInterval(timeout)
         while reader.snapshot.firstByte == nil, !reader.snapshot.ended,
-              Date() < deadline, !Task.isCancelled {
+              Date() < deadline, !Task.isCancelled, !stop() {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
 
         if let firstByte = reader.snapshot.firstByte {
             // The first seconds are the buffered burst; skip them, then measure.
-            await sleep(until: firstByte.addingTimeInterval(warmUpSeconds))
+            await sleep(until: firstByte.addingTimeInterval(warmUpSeconds), stop: stop)
             let begin = reader.snapshot
-            await sleep(until: Date().addingTimeInterval(measureSeconds))
+            await sleep(until: Date().addingTimeInterval(measureSeconds), stop: stop)
             let end = reader.snapshot
             let seconds = max(Date().timeIntervalSince(firstByte) - warmUpSeconds, 1)
             let kbps = Int(Double(end.bytes - begin.bytes) / 1024 / seconds)
@@ -196,8 +234,8 @@ final class LinkChecker: ObservableObject {
         return result
     }
 
-    private static func sleep(until date: Date) async {
-        while Date() < date, !Task.isCancelled {
+    private static func sleep(until date: Date, stop: () -> Bool) async {
+        while Date() < date, !Task.isCancelled, !stop() {
             try? await Task.sleep(nanoseconds: UInt64(min(date.timeIntervalSinceNow, 0.5) * 1e9))
         }
     }
@@ -237,5 +275,29 @@ private final class StreamReader: NSObject, URLSessionDataDelegate {
         lock.lock()
         defer { lock.unlock() }
         state.ended = true
+    }
+}
+
+/// A set of link IDs shared between the main thread and the check tasks.
+private final class LockedSet: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ids: Set<UUID> = []
+
+    func insert(_ id: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+        ids.insert(id)
+    }
+
+    func contains(_ id: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return ids.contains(id)
+    }
+
+    func removeAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        ids.removeAll()
     }
 }

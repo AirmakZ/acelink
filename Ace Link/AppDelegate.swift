@@ -565,6 +565,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             os_log("Cannot open player: %{public}@", error.localizedDescription)
                         }
                         if bundle.isBrowser { return }
+                        // Without the app instance a closed player can't be recognized and
+                        // would look like it's still playing. macOS may not return one, e.g.
+                        // when the URL goes to a copy of the player that is still quitting.
+                        let app = app ?? NSRunningApplication
+                            .runningApplications(withBundleIdentifier: bundle.bundleIdentifier ?? "")
+                            .filter { !$0.isTerminated }
+                            .max { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }
+                        os_log("Player opened: %{public}@ pid %d (slot %d)",
+                               app?.bundleIdentifier ?? "nil", app?.processIdentifier ?? -1, slot)
                         self.players[index].app = app
                     }
                 }
@@ -793,6 +802,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func detectLaunchedBundleTerminated(_ notification: Notification) {
+        if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+           players.contains(where: { $0.bundle.bundleIdentifier == app.bundleIdentifier }),
+           !players.contains(where: { $0.app?.processIdentifier == app.processIdentifier }) {
+            // A player app quit but none of ours matches it: worth knowing if one stays "playing".
+            os_log("Player app quit (pid %d), but no stream had that pid: %{public}@",
+                   app.processIdentifier,
+                   players.map { "\($0.app?.processIdentifier ?? -1)" }.joined(separator: ","))
+        }
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
             as? NSRunningApplication,
             let index = players.firstIndex(where: {

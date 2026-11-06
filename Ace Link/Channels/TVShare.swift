@@ -166,6 +166,11 @@ final class TVShare: ObservableObject {
         var failed = false
         /// The session's stats, for the transfer rates shown in the list.
         var statURL: URL?
+        /// The session's commands, to end it once nobody watches.
+        var commandURL: URL?
+        /// A TV (not the Mac's own player) asked for this stream. Its session is then never
+        /// ended from the Mac: the TV may still be reading it.
+        var requestedByTV = false
     }
 
     /// Stream hash -> warm-up. Only touched on `queue`.
@@ -185,6 +190,8 @@ final class TVShare: ObservableObject {
         }
 
         let warmUp = warmUp(param: param, hash: hash, fresh: hop == 0)
+        // The Mac's player comes through 127.0.0.1; a TV uses the Mac's network address.
+        if host != "127.0.0.1", host != "localhost" { warmUp.requestedByTV = true }
         let deadline = Date().addingTimeInterval(Self.holdSeconds)
         os_log("TV asks for %{public}@ (attempt %d)", String(hash.prefix(7)), hop + 1)
 
@@ -246,6 +253,8 @@ final class TVShare: ObservableObject {
             return existing
         }
         let warmUp = WarmUp()
+        // A TV that asked before still counts after the warm-up is renewed.
+        warmUp.requestedByTV = warmUps[hash]?.requestedByTV ?? false
         warmUps[hash] = warmUp
         // A check testing this stream would cut the TV's session, and a check testing
         // every link at once would starve it.
@@ -297,18 +306,35 @@ final class TVShare: ObservableObject {
                   let response = object["response"] as? [String: Any],
                   let stat = (response["stat_url"] as? String).flatMap(URL.init(string:))
             else { return }
-            self.queue.async { warmUp.statURL = stat }
+            let command = (response["command_url"] as? String).flatMap(URL.init(string:))
+            self.queue.async {
+                warmUp.statURL = stat
+                warmUp.commandURL = command
+            }
         }.resume()
     }
 
-    /// Stats URL of the stream the TV played last, by hash. All TV requests share one player
-    /// id, so starting a stream ends the previous one's session: only the latest can be alive.
+    /// Stats URLs of the shared sessions, by hash. Each stream has its own session (see
+    /// `sessionPlayerID`), so several can be alive; `forgetSession` drops ended ones.
     func sessionStatURLs() -> [String: URL] {
-        queue.sync {
-            guard let (hash, latest) = warmUps.filter({ $0.value.statURL != nil })
-                .max(by: { $0.value.created < $1.value.created }),
-                let url = latest.statURL else { return [:] }
-            return [hash: url]
+        queue.sync { warmUps.compactMapValues(\.statURL) }
+    }
+
+    /// Forgets a stream whose session the engine has ended, so it's no longer polled and
+    /// the next request starts a fresh one.
+    func forgetSession(hash: String) {
+        queue.async { self.warmUps[hash] = nil }
+    }
+
+    /// Ends a stream's shared session when the Mac stops playing it, unless a TV asked for
+    /// it (the TV may still be watching; the engine drops the session once nobody reads it).
+    func endSessionIfUnused(hash: String) {
+        queue.async {
+            guard let warmUp = self.warmUps[hash], !warmUp.requestedByTV else { return }
+            self.warmUps[hash] = nil
+            guard let command = warmUp.commandURL else { return }
+            os_log("Ending shared session of %{public}@", String(hash.prefix(7)))
+            URLSession.shared.dataTask(with: command.appendingQuery("method", "stop")).resume()
         }
     }
 

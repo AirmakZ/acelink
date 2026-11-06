@@ -30,6 +30,8 @@ private struct MacPlayer {
     var app: NSRunningApplication?
     /// The engine's session feeding this player.
     let session: EngineSession?
+    /// Reads the stream's shared HLS session (see joinSharedSession) instead of its own.
+    var shared = false
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -99,14 +101,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isDuplicate else { return }
 
         // Real-time transfer rates of what plays on the Mac and the TV, shown in the list.
-        TransferMonitor.shared.start { [weak self] in
+        TransferMonitor.shared.start(sessions: { [weak self] in
             guard let self = self else { return [:] }
             var sessions = self.tv.isEnabled ? self.tv.sessionStatURLs() : [:]
             for player in self.players {
                 if let url = player.session?.statURL { sessions[player.hash.lowercased()] = url }
             }
             return sessions
-        }
+        }, onGone: { [weak self] hash in
+            self?.tv.forgetSession(hash: hash)
+        })
         NSApp.mainMenu = AppMainMenu.build(target: self)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -525,7 +529,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            func launch(_ bundle: Bundle, _ url: URL, _ stream: StreamFile) {
+            func launch(_ bundle: Bundle, _ url: URL, _ stream: StreamFile, shared: Bool = false) {
                 os_log(
                     "Launching %{public}@ with URL %s…",
                     bundle.debugDescription,
@@ -537,7 +541,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.players.append(
                     MacPlayer(
                         slot: slot, linkID: linkID, hash: stream.hash, name: name,
-                        bundle: bundle, session: stream.session
+                        bundle: bundle, session: stream.session, shared: shared
                     )
                 )
                 self.loading.stop()
@@ -570,7 +574,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.joinSharedSession(
                     stream: stream, fallbackTitle: displayName, generation: generation
                 ) { stream, url in
-                    launch(bundle, url, stream)
+                    launch(bundle, url, stream, shared: true)
                 }
                 return
             }
@@ -646,6 +650,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 var stream = stream
                 let title = fallbackTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Stream"
                 stream.title = "\(title) [\(stream.hash.prefix(7))]"
+                // The session's playlist listed video segments: the link plays. (Its stats
+                // can't tell: an HLS session's stream_status stays -1 while it's read.)
+                ChannelStore.shared.markSeen(hash: stream.hash)
                 callback(stream, url)
             }
         }.resume()
@@ -829,9 +836,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Tells the engine to end the session that fed a Mac player, so it stops downloading
     /// the stream. Without it the engine keeps going until it drops the idle session, which
-    /// matters while the engine stays up for the TV. Mac and TV sessions are separate (see
-    /// StreamFile.streamURL), so the TV is never cut by this.
+    /// matters while the engine stays up for the TV. A player's own session is separate
+    /// from the TV's; a shared one is only ended when no other Mac player reads it and no
+    /// TV asked for the stream, so the TV is never cut by this.
     private func endSession(of player: MacPlayer) {
+        if player.shared {
+            // Another Mac window or a TV may read the same session; only end it when unused.
+            guard !players.contains(where: { $0.hash == player.hash }) else { return }
+            tv.endSessionIfUnused(hash: player.hash.lowercased())
+            return
+        }
         guard let commandURL = player.session?.commandURL else { return }
         os_log("Ending engine session of %{public}@", String(player.hash.prefix(7)))
         URLSession.shared.dataTask(with: commandURL.appendingQuery("method", "stop")).resume()

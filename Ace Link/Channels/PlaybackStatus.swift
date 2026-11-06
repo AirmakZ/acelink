@@ -70,10 +70,13 @@ final class TransferMonitor: ObservableObject {
     private var readings: [String: [Reading]] = [:]
     private var timer: Timer?
     private var sessions: () -> [String: URL] = { [:] }
+    private var onGone: (String) -> Void = { _ in }
 
-    /// Starts polling. `sessions` returns hash -> stats URL of what is playing now.
-    func start(sessions: @escaping () -> [String: URL]) {
+    /// Starts polling. `sessions` returns hash -> stats URL of what is playing now;
+    /// `onGone` is told about streams whose session the engine has ended.
+    func start(sessions: @escaping () -> [String: URL], onGone: @escaping (String) -> Void) {
         self.sessions = sessions
+        self.onGone = onGone
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) { [weak self] _ in
             self?.poll()
@@ -101,6 +104,7 @@ final class TransferMonitor: ObservableObject {
             // The session is gone (e.g. the TV left it): no rate to show.
             readings[hash] = nil
             rates[hash] = nil
+            onGone(hash)
             return
         }
         var list = readings[hash] ?? []

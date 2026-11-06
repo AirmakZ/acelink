@@ -157,6 +157,8 @@ struct ChannelsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+                    Spacer(minLength: 4)
+                    AvailabilityDot(availability: checker.bestResult(for: channel))
                 }
                 .padding(.vertical, 3)
                 .tag(channel.id)

@@ -74,6 +74,13 @@ final class LinkChecker: ObservableObject {
 
     var isRunning: Bool { checkingChannelID != nil }
 
+    /// The most favorable result among a channel's links, for the sidebar: green if any
+    /// link works, else orange if any is slow, else "checking" while some are still
+    /// being tested, else red. Nil if none of its links has been checked.
+    func bestResult(for channel: Channel) -> Availability? {
+        channel.links.compactMap { results[$0.id] }.min { $0.rank < $1.rank }
+    }
+
     /// Marks every link as "checking". Call before the engine is ready so the UI reacts at once.
     func begin(channel: Channel) {
         checkingChannelID = channel.id

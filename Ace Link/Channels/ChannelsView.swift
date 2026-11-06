@@ -397,6 +397,11 @@ struct AvailabilityDot: View {
         Group {
             if availability == .checking {
                 ProgressView().controlSize(.mini)
+            } else if availability == .queued {
+                Image(systemName: "clock")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary)
+                    .help("Waiting for its turn in the check")
             } else if let current = availability, let style = Self.style(current) {
                 Circle().fill(style.color).frame(width: 9, height: 9)
                     .help(style.help)
@@ -412,7 +417,7 @@ struct AvailabilityDot: View {
 
     private static func style(_ availability: Availability) -> (color: Color, help: String)? {
         switch availability {
-        case .checking:
+        case .checking, .queued:
             return nil
         case let .available(kbps):
             return (.green, "Working: downloading at \(kbps) KB/s")

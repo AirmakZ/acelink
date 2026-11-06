@@ -289,10 +289,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Availability check
 
-    /// Links tested at the same time while something plays, so the check doesn't
-    /// starve it of bandwidth and engine time. With nothing playing, all at once.
-    private static let checkConcurrencyWhilePlaying = 3
-
     /// Checks every link of a channel, or only `linkID` when given.
     func checkAvailability(channelID: UUID, linkID: UUID? = nil) {
         guard var channel = ChannelStore.shared.channel(id: channelID),
@@ -363,7 +359,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let count = channel.links.count
                 self.status.set(.working("Checking \(count) link\(count == 1 ? "" : "s")…"))
             }
-            let maxConcurrent = playing.isEmpty ? Int.max : Self.checkConcurrencyWhilePlaying
+            let maxConcurrent = playing.isEmpty ? Int.max : LinkChecker.concurrencyWhilePlaying
             self.checker.run(channel: channel, maxConcurrent: maxConcurrent) { outcome in
                 let available = outcome.values.filter { $0.rank == 0 }.count
                 os_log("Check done: %d of %d available.", available, outcome.count)
@@ -439,6 +435,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             checker.cancel() // Starting a stream restarts the engine, which would break a check.
         } else {
             checker.drop(hash: stream.hash) // Its test session would cut it as soon as it plays.
+            checker.throttle(to: LinkChecker.concurrencyWhilePlaying)
         }
         generation += 1
         let generation = self.generation

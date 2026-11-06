@@ -136,7 +136,7 @@ final class ChannelStore: ObservableObject {
     /// Saves a check result on every link that points to the stream. A working result
     /// (green or orange) also updates "last seen".
     func record(_ result: Availability, hash: String, at date: Date = Date()) {
-        guard result != .checking else { return }
+        guard !result.isPending else { return }
         updateLinks(hash: hash) { link in
             link.lastResult = result
             if result.rank <= Availability.slow(0).rank { link.lastSeen = date }

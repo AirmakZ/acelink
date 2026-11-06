@@ -2,7 +2,10 @@ import Foundation
 import os
 
 enum Availability: Equatable, Codable {
+    /// Being tested right now.
     case checking
+    /// Waiting in the check's queue for its turn.
+    case queued
     /// Peers found and downloading fast enough to watch (KB/s measured).
     case available(Int)
     /// Peers found but too slow to watch smoothly, or stalled (KB/s measured).
@@ -15,12 +18,15 @@ enum Availability: Equatable, Codable {
     /// Red: it won't play.
     var isDead: Bool { rank == 3 }
 
+    /// Part of a check that hasn't finished: being tested or waiting for its turn.
+    var isPending: Bool { self == .checking || self == .queued }
+
     /// Sort order: working first, dead last.
     var rank: Int {
         switch self {
         case .available: return 0
         case .slow: return 1
-        case .checking: return 2
+        case .checking, .queued: return 2
         case .noVideo, .unavailable: return 3
         }
     }
@@ -64,6 +70,9 @@ final class LinkChecker: ObservableObject {
     /// The first seconds of video are the engine's buffer arriving all at once; skip them.
     static let warmUpSeconds: TimeInterval = 3
     static let measureSeconds: TimeInterval = 10
+    /// Links tested at the same time while something plays, so the check doesn't starve
+    /// it of bandwidth and engine time. With nothing playing, all at once.
+    static let concurrencyWhilePlaying = 3
 
     /// Last result per link ID. Kept in memory until the app quits.
     @Published private(set) var results: [UUID: Availability] = [:]
@@ -71,9 +80,8 @@ final class LinkChecker: ObservableObject {
     @Published private(set) var checkingChannelID: UUID?
 
     private var task: Task<Void, Never>?
-    /// Links taken out of the running check because they started playing: their test
-    /// session would cut the player's (the engine sends a stream to one session only).
-    private let dropped = LockedSet()
+    /// Which tests run, may start, are dropped or must be redone. Shared with the check task.
+    private let state = CheckState()
     /// The links of the running check, to find them by stream.
     private var checkingLinks: [StreamLink] = []
 
@@ -83,7 +91,9 @@ final class LinkChecker: ObservableObject {
     /// link works, else orange if any is slow, else "checking" while some are still
     /// being tested, else red. Nil if none of its links has been checked.
     func bestResult(for channel: Channel) -> Availability? {
-        channel.links.compactMap { results[$0.id] }.min { $0.rank < $1.rank }
+        // Between pending results, show "being tested" rather than "waiting".
+        channel.links.compactMap { results[$0.id] }
+            .min { ($0.rank, $0 == .queued ? 1 : 0) < ($1.rank, $1 == .queued ? 1 : 0) }
     }
 
     /// Like `bestResult`, from the results saved by earlier checks (shown as a ring).
@@ -107,30 +117,50 @@ final class LinkChecker: ObservableObject {
         completion: @escaping ([UUID: Availability]) -> Void
     ) {
         let links = channel.links
-        let dropped = self.dropped
-        dropped.removeAll()
+        let byID = Dictionary(links.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let state = self.state
+        state.reset(limit: maxConcurrent)
+        // Links beyond the first batch wait for their turn (see `fill`).
+        for link in links.dropFirst(maxConcurrent) where results[link.id] == .checking {
+            results[link.id] = .queued
+        }
+        func show(_ availability: Availability, for id: UUID) {
+            DispatchQueue.main.async {
+                guard self.checkingChannelID == channel.id, self.results[id]?.isPending == true
+                else { return }
+                self.results[id] = availability
+            }
+        }
         os_log("Checking %d links of channel %{public}@ (%d at a time)…",
                links.count, channel.name, min(maxConcurrent, links.count))
 
         task = Task {
             let outcome = await withTaskGroup(
-                of: (UUID, Availability?).self
+                of: (UUID, Availability).self
             ) { group -> [UUID: Availability] in
-                var pending = links[...]
-                func startNext() {
-                    guard let link = pending.popFirst() else { return }
-                    group.addTask {
-                        if dropped.contains(link.id) { return (link.id, nil) }
-                        let result = await Self.measure(link) { dropped.contains(link.id) }
-                        return (link.id, dropped.contains(link.id) ? nil : result)
+                // Links still to test. Tests interrupted by `throttle` come back at the end.
+                var pending = links
+                func fill() {
+                    while !pending.isEmpty, state.canStart() {
+                        let link = pending.removeFirst()
+                        guard state.start(link.id) else { continue } // Dropped meanwhile.
+                        show(.checking, for: link.id)
+                        group.addTask {
+                            (link.id, await Self.measure(link) { state.shouldStop(link.id) })
+                        }
                     }
                 }
-                for _ in 0..<min(maxConcurrent, links.count) { startNext() }
+                fill()
 
                 var outcome: [UUID: Availability] = [:]
                 for await (id, result) in group {
-                    startNext()
-                    guard let result = result else { continue } // Dropped.
+                    let fate = state.finish(id)
+                    if fate == .redo, let link = byID[id] {
+                        pending.append(link)
+                        show(.queued, for: id)
+                    }
+                    fill()
+                    guard fate == .done else { continue }
                     outcome[id] = result
                     await MainActor.run {
                         guard self.checkingChannelID == channel.id else { return }
@@ -157,11 +187,22 @@ final class LinkChecker: ObservableObject {
         guard isRunning else { return }
         let hash = hash.lowercased()
         for link in checkingLinks
-            where link.stream?.hash.lowercased() == hash && results[link.id] == .checking {
+            where link.stream?.hash.lowercased() == hash && results[link.id]?.isPending == true {
             os_log("Leaving %{public}@ out of the check: it is starting to play.",
                    String(hash.prefix(7)))
-            dropped.insert(link.id)
+            state.drop(link.id)
             results[link.id] = nil
+        }
+    }
+
+    /// Lowers how many links are tested at once, e.g. because something started playing.
+    /// Running tests beyond the limit are stopped (ending their sessions) and redone later.
+    func throttle(to limit: Int) {
+        guard isRunning else { return }
+        let interrupted = state.throttle(to: limit)
+        if interrupted > 0 {
+            os_log("Something started playing: checking %d at a time, %d test(s) to redo.",
+                   limit, interrupted)
         }
     }
 
@@ -170,7 +211,7 @@ final class LinkChecker: ObservableObject {
         task?.cancel()
         task = nil
         checkingChannelID = nil
-        results = results.filter { $0.value != .checking }
+        results = results.filter { !$0.value.isPending }
     }
 
     /// `stop` ends the test early (its result is then ignored).
@@ -282,26 +323,67 @@ private final class StreamReader: NSObject, URLSessionDataDelegate {
     }
 }
 
-/// A set of link IDs shared between the main thread and the check tasks.
-private final class LockedSet: @unchecked Sendable {
+/// The scheduling state of a running check, shared between the main thread (which drops
+/// links and lowers the limit) and the check task.
+private final class CheckState: @unchecked Sendable {
+    enum Fate { case done, dropped, redo }
+
     private let lock = NSLock()
-    private var ids: Set<UUID> = []
+    private var limit = Int.max
+    /// Running tests, oldest first.
+    private var running: [UUID] = []
+    private var dropped: Set<UUID> = []
+    private var redo: Set<UUID> = []
 
-    func insert(_ id: UUID) {
+    private func locked<T>(_ body: () -> T) -> T {
         lock.lock()
         defer { lock.unlock() }
-        ids.insert(id)
+        return body()
     }
 
-    func contains(_ id: UUID) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return ids.contains(id)
+    func reset(limit: Int) {
+        locked {
+            self.limit = max(limit, 1)
+            running = []
+            dropped = []
+            redo = []
+        }
     }
 
-    func removeAll() {
-        lock.lock()
-        defer { lock.unlock() }
-        ids.removeAll()
+    func canStart() -> Bool { locked { running.count < limit } }
+
+    /// Marks a test as running. False if the link was dropped and must not be tested.
+    func start(_ id: UUID) -> Bool {
+        locked {
+            guard !dropped.contains(id) else { return false }
+            running.append(id)
+            return true
+        }
+    }
+
+    /// Whether a running test should stop early (its result is then ignored).
+    func shouldStop(_ id: UUID) -> Bool { locked { dropped.contains(id) || redo.contains(id) } }
+
+    func finish(_ id: UUID) -> Fate {
+        locked {
+            running.removeAll { $0 == id }
+            if dropped.contains(id) { return .dropped }
+            if redo.remove(id) != nil { return .redo }
+            return .done
+        }
+    }
+
+    func drop(_ id: UUID) { _ = locked { dropped.insert(id) } }
+
+    /// Lowers the limit and marks the newest running tests beyond it to be redone, keeping
+    /// the oldest, which are closest to finishing. Returns how many were interrupted.
+    func throttle(to newLimit: Int) -> Int {
+        locked {
+            limit = min(limit, max(newLimit, 1))
+            let extra = running.filter { !dropped.contains($0) && !redo.contains($0) }
+                .dropFirst(limit)
+            redo.formUnion(extra)
+            return extra.count
+        }
     }
 }

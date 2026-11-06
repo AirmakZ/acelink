@@ -231,8 +231,12 @@ final class TVShare: ObservableObject {
         }
         let warmUp = WarmUp()
         warmUps[hash] = warmUp
-        // A check testing this stream would cut the TV's session.
-        DispatchQueue.main.async { LinkChecker.shared.drop(hash: hash) }
+        // A check testing this stream would cut the TV's session, and a check testing
+        // every link at once would starve it.
+        DispatchQueue.main.async {
+            LinkChecker.shared.drop(hash: hash)
+            LinkChecker.shared.throttle(to: LinkChecker.concurrencyWhilePlaying)
+        }
 
         var components = URLComponents(
             url: AppConstants.Docker.baseURL.appendingPathComponent("/ace/manifest.m3u8"),

@@ -146,7 +146,35 @@ struct ChannelsView: View {
         }
     }
 
+    @ViewBuilder
     private var sidebar: some View {
+        if #available(macOS 26, *) {
+            // Rows scroll under the bar with the same blurred edge as the toolbar.
+            channelList.safeAreaBar(edge: .bottom) { newChannelBar }
+        } else {
+            // No scroll edge effect: stack them so rows never scroll under the bar.
+            VStack(spacing: 0) {
+                channelList
+                Divider()
+                newChannelBar
+            }
+        }
+    }
+
+    private var newChannelBar: some View {
+        HStack {
+            Button {
+                ui.editingChannel = Channel(name: "")
+            } label: {
+                Label("New Channel", systemImage: "plus")
+            }
+            .buttonStyle(.borderless)
+            Spacer()
+        }
+        .padding(10)
+    }
+
+    private var channelList: some View {
         List(selection: $ui.selection) {
             ForEach(store.channels) { channel in
                 HStack(spacing: 10) {
@@ -177,18 +205,6 @@ struct ChannelsView: View {
                 }
             }
             .onMove(perform: store.moveChannels)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            HStack {
-                Button {
-                    ui.editingChannel = Channel(name: "")
-                } label: {
-                    Label("New Channel", systemImage: "plus")
-                }
-                .buttonStyle(.borderless)
-                Spacer()
-            }
-            .padding(10)
         }
         .onDeleteCommand {
             if let channel = store.channel(id: ui.selection) { ui.channelPendingDelete = channel }

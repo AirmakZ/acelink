@@ -100,6 +100,8 @@ struct ChannelsView: View {
             LinkEditor(
                 link: target.link,
                 isNew: target.isNew,
+                channelID: target.channelID,
+                channels: store.channels,
                 onSave: { saved in
                     store.upsert(link: saved, in: target.channelID)
                     ui.editingLink = nil

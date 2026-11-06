@@ -9,9 +9,19 @@ private struct GetStreamInfoResponse: Decodable {
 
 private struct StreamInfoResponse: Decodable {
     let statURLString: String
+    let commandURLString: String?
     enum CodingKeys: String, CodingKey {
         case statURLString = "stat_url"
+        case commandURLString = "command_url"
     }
+}
+
+/// The engine's addresses for a stream's session.
+struct EngineSession {
+    /// Stats: peers, download speed, whether a player is being fed.
+    let statURL: URL
+    /// Commands, e.g. `method=stop` to end the session.
+    let commandURL: URL?
 }
 
 struct StreamFile {
@@ -21,8 +31,8 @@ struct StreamFile {
     /// Which Mac player this is for. Each stream playing at the same time gets its own
     /// slot, so it gets its own engine session and playlist file.
     var slot = 0
-    /// The engine's stats for this stream's session, once it has started.
-    var statURL: URL?
+    /// The engine's session for this stream, once it has started.
+    var session: EngineSession?
 
     var playlistFileName: String {
         slot == 0 ? "acelink.m3u8" : "acelink-\(slot).m3u8"
@@ -67,8 +77,8 @@ struct StreamFile {
         }
     }
 
-    /// Calls back with the session's stats URL once the stream has peers.
-    func waitForPeers(callback: @escaping (AppError?, URL?) -> Void) {
+    /// Calls back with the stream's engine session once it has peers.
+    func waitForPeers(callback: @escaping (AppError?, EngineSession?) -> Void) {
         getStreamInfo { streamInfo in
             guard let streamInfo = streamInfo,
                   let statURL = URL(string: streamInfo.response.statURLString) else {
@@ -77,8 +87,12 @@ struct StreamFile {
                 }
                 return
             }
+            let session = EngineSession(
+                statURL: statURL,
+                commandURL: streamInfo.response.commandURLString.flatMap(URL.init(string:))
+            )
             StreamPeers(statURL: statURL).task { result in
-                callback(result, statURL)
+                callback(result, session)
             }
         }
     }

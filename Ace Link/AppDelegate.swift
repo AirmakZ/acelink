@@ -28,6 +28,8 @@ private struct MacPlayer {
     let bundle: Bundle
     /// The player app instance, once it's running. Nil for browsers.
     var app: NSRunningApplication?
+    /// The engine's session feeding this player.
+    let session: EngineSession?
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -110,6 +112,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             channelsWindow = ChannelsWindowController(actions: PlaybackActions(
                 play: { [weak self] link in self?.play(link: link) },
                 playAlongside: { [weak self] link in self?.play(link: link, alongside: true) },
+                stopLink: { [weak self] in self?.stopPlaying(linkID: $0) },
                 playFromClipboard: { [weak self] in self?.playFromClipboard() },
                 stop: { [weak self] in self?.stopPlayback() },
                 checkAvailability: { [weak self] in self?.checkAvailability(channelID: $0) },
@@ -154,6 +157,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         status.activeLinkID = nil
         status.set(.idle)
+    }
+
+    /// Stops one stream playing on the Mac: closes its player and ends its engine session,
+    /// so the engine stops downloading it. Other streams (and the TV) keep playing.
+    func stopPlaying(linkID: UUID) {
+        let stopping = players.filter { $0.linkID == linkID }
+        guard !stopping.isEmpty else { return }
+        players.removeAll { $0.linkID == linkID }
+        for player in stopping {
+            os_log("Stop playing %{public}@", String(player.hash.prefix(7)))
+            if !player.bundle.isBrowser { player.app?.terminate() }
+            endSession(of: player)
+        }
+        guard players.isEmpty else { return }
+        if !tv.isEnabled, !checker.isRunning {
+            stopAceStreamServer()
+        }
+        if !status.isBusy {
+            status.set(.idle)
+        }
     }
 
     // MARK: - Share to TV
@@ -426,7 +449,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let used = Set(players.map(\.slot))
             stream.slot = (0...).first { !used.contains($0) }!
         } else {
-            terminatePlayers()
+            terminatePlayers(keepingSessionOf: stream.hash)
         }
         os_log("Open stream: %{public}s=%s (slot %d)", stream.param, stream.hash, stream.slot)
 
@@ -459,13 +482,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     let slot = stream.slot
                     self.players.append(
                         MacPlayer(
-                            slot: slot, linkID: linkID, hash: stream.hash, name: name, bundle: bundle
+                            slot: slot, linkID: linkID, hash: stream.hash, name: name,
+                            bundle: bundle, session: stream.session
                         )
                     )
                     self.loading.stop()
                     self.status.activeLinkID = nil
                     self.status.set(.playing(self.status.nowPlaying ?? name))
-                    if let statURL = stream.statURL, !bundle.isBrowser {
+                    if let statURL = stream.session?.statURL, !bundle.isBrowser {
                         self.markSeenOncePlaying(stream.hash, slot: slot, statURL: statURL)
                     }
 
@@ -552,7 +576,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             os_log("Waiting for peers…")
             self.status.set(.working("Waiting for peers…"))
-            stream.waitForPeers { result, statURL in
+            stream.waitForPeers { result, session in
                 guard generation == self.generation else { return }
                 if let message = result?.errorDescription {
                     self.fail(message, generation: generation)
@@ -560,7 +584,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 var stream = stream
-                stream.statURL = statURL
+                stream.session = session
                 let title = aceStreamPlaylist.title
                     ?? fallbackTitle.flatMap { $0.isEmpty ? nil : $0 }
                     ?? "Stream"
@@ -664,7 +688,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         else { return }
 
         os_log("Player %{public}@ closed by user.", app.bundleIdentifier ?? "?")
-        players.remove(at: index)
+        endSession(of: players.remove(at: index))
         if !players.isEmpty || checker.isRunning {
             return // Other streams (or the check) still need the engine.
         }
@@ -677,10 +701,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Closes the player windows Ace Link opened.
-    func terminatePlayers() {
+    /// Pass `keepingSessionOf` when the same stream is about to play again: it reuses
+    /// the session (same player id and stream), so ending it would cut the new playback.
+    func terminatePlayers(keepingSessionOf keptHash: String? = nil) {
         let running = players
         players = []
         for player in running {
+            if player.hash != keptHash {
+                endSession(of: player)
+            }
             if player.bundle.isBrowser {
                 // A browser may have other tabs open; leave it.
                 continue
@@ -690,6 +719,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 app.terminate()
             }
         }
+    }
+
+    /// Tells the engine to end the session that fed a Mac player, so it stops downloading
+    /// the stream. Without it the engine keeps going until it drops the idle session, which
+    /// matters while the engine stays up for the TV. Mac and TV sessions are separate (see
+    /// StreamFile.streamURL), so the TV is never cut by this.
+    private func endSession(of player: MacPlayer) {
+        guard let commandURL = player.session?.commandURL else { return }
+        os_log("Ending engine session of %{public}@", String(player.hash.prefix(7)))
+        URLSession.shared.dataTask(with: commandURL.appendingQuery("method", "stop")).resume()
     }
 
     /// Updates the status bar and the list highlights after streams start or stop.

@@ -11,6 +11,8 @@ struct LinkEditTarget: Identifiable {
 struct PlaybackActions {
     var play: (StreamLink) -> Void
     var playAlongside: (StreamLink) -> Void
+    /// Stops one link playing on the Mac, leaving the others playing.
+    var stopLink: (UUID) -> Void
     var playFromClipboard: () -> Void
     var stop: () -> Void
     var checkAvailability: (UUID) -> Void
@@ -273,6 +275,7 @@ struct ChannelDetailView: View {
                             isLoading: status.activeLinkID == link.id && status.isBusy,
                             isPlaying: status.playingLinkIDs.contains(link.id),
                             availability: checker.results[link.id],
+                            onStop: { actions.stopLink(link.id) },
                             onPlay: {
                                 if NSEvent.modifierFlags.contains(.option) {
                                     actions.playAlongside(link)
@@ -282,6 +285,9 @@ struct ChannelDetailView: View {
                             }
                         )
                         .contextMenu {
+                            if status.playingLinkIDs.contains(link.id) {
+                                Button("Stop") { actions.stopLink(link.id) }
+                            }
                             Button("Play") { onPlay(link) }
                             Button("Play Alongside") { actions.playAlongside(link) }
                                 .disabled(status.playingLinkIDs.isEmpty || status.isBusy)
@@ -431,6 +437,7 @@ struct LinkRow: View {
     let isLoading: Bool
     let isPlaying: Bool
     let availability: Availability?
+    let onStop: () -> Void
     let onPlay: () -> Void
 
     @StateObject private var hover = HoverState()
@@ -441,7 +448,13 @@ struct LinkRow: View {
                 if isLoading {
                     ProgressView().controlSize(.small)
                 } else if isPlaying {
-                    Image(systemName: "speaker.wave.2.fill").foregroundColor(.accentColor)
+                    // Hovering turns the speaker into a stop button for this stream only.
+                    Button(action: onStop) {
+                        Image(systemName: hover.isHovering ? "stop.circle.fill" : "speaker.wave.2.fill")
+                            .foregroundColor(.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop this stream")
                 } else {
                     Image(systemName: "play.circle.fill")
                         .foregroundColor(hover.isHovering ? .accentColor : .secondary)

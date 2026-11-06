@@ -19,6 +19,8 @@ struct StreamLink: Codable, Identifiable, Equatable {
     var name: String
     /// What the user pasted: a hash, acestream:// link or magnet URI.
     var url: String
+    /// The last time an availability check found the link working (green or orange).
+    var lastSeen: Date?
 
     var stream: StreamFile? {
         guard let stream = ExtractStream.from(unverifiedData: url), !stream.hash.isEmpty else {
@@ -107,15 +109,33 @@ final class ChannelStore: ObservableObject {
 
     /// Puts working links first, then slow ones, and dead ones last, keeping the order within
     /// each group. Links without a result (e.g. added during the check) go before dead ones.
+    /// Dead links are ordered by when they last worked, so the longest-dead end up at the bottom.
     func sortLinks(in channelID: UUID, by availability: [UUID: Availability]) {
         guard let index = channels.firstIndex(where: { $0.id == channelID }) else { return }
-        func rank(_ link: StreamLink) -> Int {
-            availability[link.id]?.rank ?? Availability.checking.rank
+        func key(_ link: StreamLink, _ offset: Int) -> (Int, Double, Int) {
+            let rank = availability[link.id]?.rank ?? Availability.checking.rank
+            // Most recently seen first; never seen last.
+            let age = rank == Availability.unavailable.rank
+                ? -(link.lastSeen?.timeIntervalSinceReferenceDate ?? -.infinity) : 0
+            return (rank, age, offset)
         }
         let links = channels[index].links
         channels[index].links = links.enumerated()
-            .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
+            .sorted { key($0.element, $0.offset) < key($1.element, $1.offset) }
             .map(\.element)
+    }
+
+    /// Records that a stream delivered video now, on every link that points to it.
+    func markSeen(hash: String, at date: Date = Date()) {
+        let hash = hash.lowercased()
+        var updated = channels // Edit a copy so the file is saved once.
+        for channelIndex in updated.indices {
+            for linkIndex in updated[channelIndex].links.indices
+                where updated[channelIndex].links[linkIndex].stream?.hash.lowercased() == hash {
+                updated[channelIndex].links[linkIndex].lastSeen = date
+            }
+        }
+        if updated != channels { channels = updated }
     }
 
     func delete(linkID: UUID, in channelID: UUID) {

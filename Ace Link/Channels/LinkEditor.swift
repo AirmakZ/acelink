@@ -13,10 +13,13 @@ struct LinkEditor: View {
     let channels: [Channel]
     let onSave: (StreamLink) -> Void
     let onCancel: () -> Void
+    /// The stream before editing; "last seen" no longer applies if it changes.
+    private let originalHash: String?
 
     init(link: StreamLink, isNew: Bool, channelID: UUID, channels: [Channel],
          onSave: @escaping (StreamLink) -> Void, onCancel: @escaping () -> Void) {
         _draft = StateObject(wrappedValue: LinkDraft(link: link))
+        originalHash = link.stream?.hash.lowercased()
         self.isNew = isNew
         self.channelID = channelID
         self.channels = channels
@@ -111,6 +114,7 @@ struct LinkEditor: View {
                     var saved = draft.link
                     saved.url = trimmedURL
                     saved.name = saved.name.trimmingCharacters(in: .whitespaces)
+                    if hash != originalHash { saved.lastSeen = nil }
                     onSave(saved)
                 }
                 .keyboardShortcut(.defaultAction)

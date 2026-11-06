@@ -108,6 +108,10 @@ final class LinkChecker: ObservableObject {
                     await MainActor.run {
                         guard self.checkingChannelID == channel.id else { return }
                         self.results[id] = result
+                        if result.rank <= Availability.slow(0).rank,
+                           let hash = links.first(where: { $0.id == id })?.stream?.hash {
+                            ChannelStore.shared.markSeen(hash: hash)
+                        }
                     }
                 }
                 return outcome

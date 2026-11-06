@@ -450,12 +450,29 @@ struct LinkRow: View {
                 }
             }
             Spacer()
+            lastSeenLabel
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onHover { hover.isHovering = $0 }
         .onTapGesture(perform: onPlay)
         .help("Click to play in your media player. ⌥-click to play alongside what's playing.")
+    }
+
+    /// When an availability check last found the link working. "Never seen" only once a
+    /// check has found it dead, so unchecked links stay uncluttered.
+    @ViewBuilder
+    private var lastSeenLabel: some View {
+        if let lastSeen = link.lastSeen {
+            Text("Last seen \(lastSeen.formatted(date: .abbreviated, time: .shortened))")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+        } else if availability?.isDead == true {
+            Text("Never seen")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
     }
 }
 

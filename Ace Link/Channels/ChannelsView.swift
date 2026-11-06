@@ -246,6 +246,7 @@ struct ChannelDetailView: View {
     @ObservedObject var store: ChannelStore
     @ObservedObject var status: PlaybackStatus
     @ObservedObject var checker: LinkChecker
+    @ObservedObject var transfers = TransferMonitor.shared
     let actions: PlaybackActions
     let onPlay: (StreamLink) -> Void
     let onEditChannel: () -> Void
@@ -275,6 +276,7 @@ struct ChannelDetailView: View {
                             isLoading: status.activeLinkID == link.id && status.isBusy,
                             isPlaying: status.playingLinkIDs.contains(link.id),
                             availability: checker.results[link.id],
+                            rate: link.stream.flatMap { transfers.rates[$0.hash.lowercased()] },
                             onStop: { actions.stopLink(link.id) },
                             onPlay: {
                                 if NSEvent.modifierFlags.contains(.option) {
@@ -442,6 +444,8 @@ struct LinkRow: View {
     let isLoading: Bool
     let isPlaying: Bool
     let availability: Availability?
+    /// Live transfer rate while the stream plays on the Mac or the TV.
+    let rate: TransferRate?
     let onStop: () -> Void
     let onPlay: () -> Void
 
@@ -481,7 +485,11 @@ struct LinkRow: View {
                 }
             }
             Spacer()
-            lastSeenLabel
+            if let rate = rate {
+                TransferRateLabel(rate: rate)
+            } else {
+                lastSeenLabel
+            }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -504,6 +512,31 @@ struct LinkRow: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
+    }
+}
+
+/// "▼ 608 KB/s  ▲ 12 KB/s · 3 peers", orange when the download is too slow to keep up.
+struct TransferRateLabel: View {
+    let rate: TransferRate
+
+    private static func format(_ kbps: Int) -> String {
+        kbps >= 1024 ? String(format: "%.1f MB/s", Double(kbps) / 1024) : "\(kbps) KB/s"
+    }
+
+    var body: some View {
+        let slow = rate.downKBps < LinkChecker.minimumKBps
+        HStack(spacing: 6) {
+            Text("▼ \(Self.format(rate.downKBps))")
+                .foregroundColor(slow ? .orange : .secondary)
+            Text("▲ \(Self.format(rate.upKBps))")
+            Text("· \(rate.peers) peer\(rate.peers == 1 ? "" : "s")")
+        }
+        .font(.caption)
+        .foregroundColor(.secondary)
+        .monospacedDigit()
+        .help(slow
+            ? "Downloading slower than most streams need; playback may freeze."
+            : "Downloading from and uploading to other peers, right now.")
     }
 }
 

@@ -164,6 +164,8 @@ final class TVShare: ObservableObject {
         let created = Date()
         var readyPath: String?
         var failed = false
+        /// The session's stats, for the transfer rates shown in the list.
+        var statURL: URL?
     }
 
     /// Stream hash -> warm-up. Only touched on `queue`.
@@ -259,6 +261,7 @@ final class TVShare: ObservableObject {
                    body.contains("#EXTINF"), let url = http.url {
                     warmUp.readyPath = url.path + (url.query.map { "?" + $0 } ?? "")
                     os_log("TV stream %{public}@ ready", String(hash.prefix(7)))
+                    self.fetchStatURL(for: warmUp, manifest: components)
                 } else {
                     warmUp.failed = true
                     os_log("TV stream %{public}@ failed", String(hash.prefix(7)))
@@ -266,6 +269,33 @@ final class TVShare: ObservableObject {
             }
         }.resume()
         return warmUp
+    }
+
+    /// Asks the engine for the session's stats URL. The JSON form of the manifest under the
+    /// same player id returns the same session, so this doesn't disturb the TV.
+    private func fetchStatURL(for warmUp: WarmUp, manifest components: URLComponents) {
+        var components = components
+        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "format", value: "json")]
+        guard let url = components.url else { return }
+        URLSession(configuration: .ephemeral).dataTask(with: url) { data, _, _ in
+            guard let data = data,
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let response = object["response"] as? [String: Any],
+                  let stat = (response["stat_url"] as? String).flatMap(URL.init(string:))
+            else { return }
+            self.queue.async { warmUp.statURL = stat }
+        }.resume()
+    }
+
+    /// Stats URL of the stream the TV played last, by hash. All TV requests share one player
+    /// id, so starting a stream ends the previous one's session: only the latest can be alive.
+    func sessionStatURLs() -> [String: URL] {
+        queue.sync {
+            guard let (hash, latest) = warmUps.filter({ $0.value.statURL != nil })
+                .max(by: { $0.value.created < $1.value.created }),
+                let url = latest.statURL else { return [:] }
+            return [hash: url]
+        }
     }
 
     private static func redirect(to location: String) -> Data {

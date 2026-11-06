@@ -97,6 +97,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_: Notification) {
         guard !isDuplicate else { return }
+
+        // Real-time transfer rates of what plays on the Mac and the TV, shown in the list.
+        TransferMonitor.shared.start { [weak self] in
+            guard let self = self else { return [:] }
+            var sessions = self.tv.isEnabled ? self.tv.sessionStatURLs() : [:]
+            for player in self.players {
+                if let url = player.session?.statURL { sessions[player.hash.lowercased()] = url }
+            }
+            return sessions
+        }
         NSApp.mainMenu = AppMainMenu.build(target: self)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)

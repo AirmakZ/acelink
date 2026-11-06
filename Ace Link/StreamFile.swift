@@ -21,6 +21,8 @@ struct StreamFile {
     /// Which Mac player this is for. Each stream playing at the same time gets its own
     /// slot, so it gets its own engine session and playlist file.
     var slot = 0
+    /// The engine's stats for this stream's session, once it has started.
+    var statURL: URL?
 
     var playlistFileName: String {
         slot == 0 ? "acelink.m3u8" : "acelink-\(slot).m3u8"
@@ -65,17 +67,18 @@ struct StreamFile {
         }
     }
 
-    func waitForPeers(callback: @escaping (AppError?) -> Void) {
+    /// Calls back with the session's stats URL once the stream has peers.
+    func waitForPeers(callback: @escaping (AppError?, URL?) -> Void) {
         getStreamInfo { streamInfo in
             guard let streamInfo = streamInfo,
                   let statURL = URL(string: streamInfo.response.statURLString) else {
                 DispatchQueue.main.async {
-                    callback(AppError("Cannot get stream info. The link may be offline."))
+                    callback(AppError("Cannot get stream info. The link may be offline."), nil)
                 }
                 return
             }
             StreamPeers(statURL: statURL).task { result in
-                callback(result)
+                callback(result, statURL)
             }
         }
     }

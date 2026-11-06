@@ -19,7 +19,7 @@ struct StreamLink: Codable, Identifiable, Equatable {
     var name: String
     /// What the user pasted: a hash, acestream:// link or magnet URI.
     var url: String
-    /// The last time an availability check found the link working (green or orange).
+    /// The last time the link worked: a check found it green or orange, or it played.
     var lastSeen: Date?
 
     var stream: StreamFile? {

@@ -2,6 +2,23 @@ import Cocoa
 import os
 import SwiftUI
 
+/// The part of the engine's session stats that tells whether a player is being fed.
+private struct PlaybackStats: Decodable {
+    let response: Stats?
+
+    struct Stats: Decodable {
+        let status: String?
+        let streamStatus: Int?
+        let downloaded: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case streamStatus = "stream_status"
+            case downloaded
+        }
+    }
+}
+
 /// A stream playing on the Mac.
 private struct MacPlayer {
     let slot: Int
@@ -448,6 +465,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self.loading.stop()
                     self.status.activeLinkID = nil
                     self.status.set(.playing(self.status.nowPlaying ?? name))
+                    if let statURL = stream.statURL, !bundle.isBrowser {
+                        self.markSeenOncePlaying(stream.hash, slot: slot, statURL: statURL)
+                    }
 
                     let config = NSWorkspace.OpenConfiguration()
                     // A second stream needs its own player window: VLC would otherwise
@@ -466,6 +486,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                             self.players[index].app = app
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Updates "last seen" once the engine is feeding the player video. Peers alone (what
+    /// opening the player waits for) don't mean a link plays: it can have peers and no video.
+    private func markSeenOncePlaying(_ hash: String, slot: Int, statURL: URL) {
+        Task {
+            var firstDownloaded: Int?
+            let deadline = Date().addingTimeInterval(60)
+            while Date() < deadline {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                let stillPlaying = await MainActor.run {
+                    self.players.contains { $0.slot == slot && $0.hash == hash }
+                }
+                guard stillPlaying else { return }
+
+                guard let (data, _) = try? await URLSession.shared.data(from: statURL),
+                      let stats = try? JSONDecoder().decode(PlaybackStats.self, from: data)
+                        .response else { continue }
+                let downloaded = stats.downloaded ?? 0
+                if firstDownloaded == nil { firstDownloaded = downloaded }
+                // stream_status 1: the engine is sending the stream to a player (-1 once
+                // another session has taken it over). And video keeps arriving.
+                if stats.status == "dl", stats.streamStatus == 1,
+                   downloaded - (firstDownloaded ?? downloaded) >= 1_048_576 {
+                    os_log("Playing %{public}@ fine; updating last seen.", String(hash.prefix(7)))
+                    await MainActor.run { ChannelStore.shared.markSeen(hash: hash) }
+                    return
                 }
             }
         }
@@ -502,7 +552,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             os_log("Waiting for peers…")
             self.status.set(.working("Waiting for peers…"))
-            stream.waitForPeers { result in
+            stream.waitForPeers { result, statURL in
                 guard generation == self.generation else { return }
                 if let message = result?.errorDescription {
                     self.fail(message, generation: generation)
@@ -510,6 +560,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
 
                 var stream = stream
+                stream.statURL = statURL
                 let title = aceStreamPlaylist.title
                     ?? fallbackTitle.flatMap { $0.isEmpty ? nil : $0 }
                     ?? "Stream"

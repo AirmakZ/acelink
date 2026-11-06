@@ -525,50 +525,63 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
+            func launch(_ bundle: Bundle, _ url: URL, _ stream: StreamFile) {
+                os_log(
+                    "Launching %{public}@ with URL %s…",
+                    bundle.debugDescription,
+                    url.debugDescription
+                )
+
+                let name = displayName.flatMap { $0.isEmpty ? nil : $0 } ?? stream.title
+                let slot = stream.slot
+                self.players.append(
+                    MacPlayer(
+                        slot: slot, linkID: linkID, hash: stream.hash, name: name,
+                        bundle: bundle, session: stream.session
+                    )
+                )
+                self.loading.stop()
+                self.status.activeLinkID = nil
+                self.status.set(.playing(self.status.nowPlaying ?? name))
+                if let statURL = stream.session?.statURL, !bundle.isBrowser {
+                    self.markSeenOncePlaying(stream.hash, slot: slot, statURL: statURL)
+                }
+
+                let config = NSWorkspace.OpenConfiguration()
+                // A second stream needs its own player window: VLC would otherwise
+                // replace the first stream with it.
+                config.createsNewApplicationInstance = alongside && !bundle.isBrowser
+                NSWorkspace.shared.open(
+                    [url], withApplicationAt: bundle.bundleURL, configuration: config
+                ) { app, error in
+                    DispatchQueue.main.async {
+                        guard let index = self.players.firstIndex(where: { $0.slot == slot })
+                        else { return } // Stopped meanwhile.
+                        if let error = error {
+                            os_log("Cannot open player: %{public}@", error.localizedDescription)
+                        }
+                        if bundle.isBrowser { return }
+                        self.players[index].app = app
+                    }
+                }
+            }
+
+            if self.tv.state == .on, let bundle = AppConfig.playerBundle, !bundle.isBrowser {
+                self.joinSharedSession(
+                    stream: stream, fallbackTitle: displayName, generation: generation
+                ) { stream, url in
+                    launch(bundle, url, stream)
+                }
+                return
+            }
+
             self.prepareStream(
                 engine: engine, stream: stream, fallbackTitle: displayName, generation: generation
             ) { stream in
                 self.launchStreamInEngine(
                     engine: engine, stream: stream, generation: generation
                 ) { bundle, url in
-                    os_log(
-                        "Launching %{public}@ with URL %s…",
-                        bundle.debugDescription,
-                        url.debugDescription
-                    )
-
-                    let name = displayName.flatMap { $0.isEmpty ? nil : $0 } ?? stream.title
-                    let slot = stream.slot
-                    self.players.append(
-                        MacPlayer(
-                            slot: slot, linkID: linkID, hash: stream.hash, name: name,
-                            bundle: bundle, session: stream.session
-                        )
-                    )
-                    self.loading.stop()
-                    self.status.activeLinkID = nil
-                    self.status.set(.playing(self.status.nowPlaying ?? name))
-                    if let statURL = stream.session?.statURL, !bundle.isBrowser {
-                        self.markSeenOncePlaying(stream.hash, slot: slot, statURL: statURL)
-                    }
-
-                    let config = NSWorkspace.OpenConfiguration()
-                    // A second stream needs its own player window: VLC would otherwise
-                    // replace the first stream with it.
-                    config.createsNewApplicationInstance = alongside && !bundle.isBrowser
-                    NSWorkspace.shared.open(
-                        [url], withApplicationAt: bundle.bundleURL, configuration: config
-                    ) { app, error in
-                        DispatchQueue.main.async {
-                            guard let index = self.players.firstIndex(where: { $0.slot == slot })
-                            else { return } // Stopped meanwhile.
-                            if let error = error {
-                                os_log("Cannot open player: %{public}@", error.localizedDescription)
-                            }
-                            if bundle.isBrowser { return }
-                            self.players[index].app = app
-                        }
-                    }
+                    launch(bundle, url, stream)
                 }
             }
         }
@@ -602,6 +615,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    /// While sharing to the TV, the Mac plays the same HLS session the TV uses for a stream
+    /// (see TVShare.sessionPlayerID), so the Mac and the TV can watch the same channel: the
+    /// engine sends a stream to one session only. Waits until the session has video, then
+    /// hands the player the same address, which by then answers at once.
+    private func joinSharedSession(
+        stream: StreamFile,
+        fallbackTitle: String?,
+        generation: Int,
+        callback: @escaping (StreamFile, URL) -> Void
+    ) {
+        os_log("Joining the shared session for %{public}@…", String(stream.hash.prefix(7)))
+        status.set(.working("Waiting for video…"))
+
+        let url = TVShare.localPlayURL(for: stream)
+        // Up to the TV server's own give-up time (≈ 54 s of redirects), plus margin.
+        let request = URLRequest(url: url, timeoutInterval: 70)
+        URLSession(configuration: .ephemeral).dataTask(with: request) { data, response, _ in
+            let body = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            let ready = (response as? HTTPURLResponse)?.statusCode == 200
+                && body.contains("#EXTINF")
+            DispatchQueue.main.async {
+                guard generation == self.generation else { return }
+                guard ready else {
+                    self.fail("No video arrived. The link may be offline.", generation: generation)
+                    return
+                }
+                var stream = stream
+                let title = fallbackTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Stream"
+                stream.title = "\(title) [\(stream.hash.prefix(7))]"
+                callback(stream, url)
+            }
+        }.resume()
     }
 
     /// Shows the error in the channels window (and as an alert if the window is closed).

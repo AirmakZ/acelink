@@ -179,7 +179,7 @@ final class TVShare: ObservableObject {
             return send(Self.http(404, type: "text/plain", body: Data("Not found".utf8)))
         }
         let param = parts[1]
-        let hash = String(parts[2].dropLast(".m3u8".count))
+        let hash = String(parts[2].dropLast(".m3u8".count)).lowercased()
         guard hash.range(of: "^[0-9a-fA-F]{40}$", options: .regularExpression) != nil else {
             return send(Self.http(404, type: "text/plain", body: Data("Not found".utf8)))
         }
@@ -225,6 +225,20 @@ final class TVShare: ObservableObject {
         return active
     }
 
+    /// The engine keeps one session per stream, and one stream per player id: asking for a
+    /// stream under a new id cuts the session of the old one, and asking for another stream
+    /// under the same id ends its previous session. So the id is derived from the stream.
+    /// Everyone watching a stream (TVs and, while sharing, the Mac) reads the same session,
+    /// and different streams never interfere.
+    static func sessionPlayerID(hash: String) -> String {
+        "acelink-\(hash.lowercased())"
+    }
+
+    /// The playlist the Mac's player opens to join the shared session of a stream.
+    static func localPlayURL(for stream: StreamFile) -> URL {
+        URL(string: "http://127.0.0.1:\(port)/play/\(stream.param)/\(stream.hash.lowercased()).m3u8")!
+    }
+
     /// Starts (or reuses) loading a stream in the engine for the TV.
     private func warmUp(param: String, hash: String, fresh: Bool) -> WarmUp {
         if let existing = warmUps[hash],
@@ -246,7 +260,7 @@ final class TVShare: ObservableObject {
         )!
         components.queryItems = [
             URLQueryItem(name: param, value: hash),
-            URLQueryItem(name: "pid", value: "acelink-tv")
+            URLQueryItem(name: "pid", value: Self.sessionPlayerID(hash: hash))
         ]
         let request = URLRequest(
             url: components.url!,

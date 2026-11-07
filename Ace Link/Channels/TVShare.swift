@@ -241,11 +241,28 @@ final class TVShare: ObservableObject {
         /// Engine media sequence of a restarted session's first segment, which gets a
         /// discontinuity tag while it's in the playlist.
         var discontinuityAt: Int?
+        /// The newest segments, fetched as soon as the playlist lists them, by engine path.
+        /// If the session dies, players can still get what the playlist already promised
+        /// (a missing segment makes TVs give up for good).
+        var segments: [String: Data] = [:]
+        var segmentOrder: [String] = []
+        var fetching: Set<String> = []
+
+        func store(_ data: Data, for path: String) {
+            if segments[path] == nil { segmentOrder.append(path) }
+            segments[path] = data
+            while segmentOrder.count > TVShare.cachedSegments {
+                segments[segmentOrder.removeFirst()] = nil
+            }
+        }
 
         init(manifest: URLComponents) {
             self.manifest = manifest
         }
     }
+
+    /// Segments kept per stream (about 3 MB each in HD).
+    fileprivate static let cachedSegments = 6
 
     /// A stream being read whose playlist gains no segment for this long is stuck.
     private static let stallSeconds: TimeInterval = 30
@@ -365,10 +382,15 @@ final class TVShare: ObservableObject {
                                        from: playlistURL, warmUp: warmUp, hash: hash)
                 }
             }
-        } else if tail.hasPrefix("seg/ace/"),
-                  let segmentURL = URL(string: AppConstants.Docker.baseURL.absoluteString
-                      + "/" + tail.dropFirst("seg/".count) + (rawQuery.map { "?" + $0 } ?? "")) {
-            relay(segmentURL, hash: hash, send: send, type: "video/mp2t")
+        } else if tail.hasPrefix("seg/ace/") {
+            let enginePath = "/" + tail.dropFirst("seg/".count) + (rawQuery.map { "?" + $0 } ?? "")
+            if let cached = warmUp.segments[enginePath] {
+                return send(Self.http(200, type: "video/mp2t", body: cached))
+            }
+            guard let segmentURL = URL(string: AppConstants.Docker.baseURL.absoluteString + enginePath)
+            else { return send(Self.notFound) }
+            relay(segmentURL, hash: hash, send: send, type: "video/mp2t",
+                  store: { data in self.queue.async { warmUp.store(data, for: enginePath) } })
         } else {
             send(Self.notFound)
         }
@@ -377,7 +399,8 @@ final class TVShare: ObservableObject {
     /// Fetches `url` from the engine and passes it on, after `transform` if given.
     private func relay(
         _ url: URL, hash: String, send: @escaping (Data) -> Void,
-        type: String = "application/vnd.apple.mpegurl", onMissing: (() -> Void)? = nil,
+        type: String = "application/vnd.apple.mpegurl",
+        onMissing: (() -> Void)? = nil, store: ((Data) -> Void)? = nil,
         fallback: (() -> Data?)? = nil, transform: ((Data) -> Data)? = nil
     ) {
         engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
@@ -390,6 +413,7 @@ final class TVShare: ObservableObject {
                 return send(Self.http(status == 404 ? 404 : 502, type: "text/plain",
                                       body: Data("Stream unavailable".utf8)))
             }
+            store?(data)
             send(Self.http(200, type: type, body: transform?(data) ?? data))
         }.resume()
     }
@@ -407,6 +431,7 @@ final class TVShare: ObservableObject {
             return Int(line.dropFirst("#EXT-X-MEDIA-SEQUENCE:".count).trimmingCharacters(in: .whitespaces))
         }.first ?? 0
         let segments = lines.filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        prefetch(playlist, from: playlistURL, warmUp: warmUp)
 
         if warmUp.awaitingRestartedPlaylist {
             // Carry on right after the last segment players got.
@@ -450,6 +475,31 @@ final class TVShare: ObservableObject {
         let data = Data(output.joined(separator: "\n").utf8)
         warmUp.cachedPlaylist = data
         return data
+    }
+
+    /// Fetches the newest segments an engine playlist lists into the stream's cache, so they
+    /// survive the session dying before players ask for them. On `queue`.
+    private func prefetch(_ playlist: String, from playlistURL: URL, warmUp: WarmUp) {
+        let paths = playlist.components(separatedBy: "\n").compactMap { line -> String? in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#"),
+                  let url = URL(string: trimmed, relativeTo: playlistURL)?.absoluteURL
+            else { return nil }
+            return url.path + (url.query.map { "?" + $0 } ?? "")
+        }
+        for path in paths.suffix(Self.cachedSegments)
+            where warmUp.segments[path] == nil && !warmUp.fetching.contains(path) {
+            guard let url = URL(string: AppConstants.Docker.baseURL.absoluteString + path)
+            else { continue }
+            warmUp.fetching.insert(path)
+            engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
+                let ok = (response as? HTTPURLResponse)?.statusCode == 200
+                self.queue.async {
+                    warmUp.fetching.remove(path)
+                    if ok, let data = data { warmUp.store(data, for: path) }
+                }
+            }.resume()
+        }
     }
 
     /// Starts a stuck stream's session again under the hood: players keep the same playlist

@@ -14,6 +14,7 @@ final class TVShare: ObservableObject {
     private static let enabledKey = "tvSharingEnabled"
     private static let hideDeadLinksKey = "tvHideDeadLinks"
 
+
     enum State: Equatable {
         case off
         case starting(String)
@@ -197,6 +198,21 @@ final class TVShare: ObservableObject {
     /// Redirects before giving up (≈ 50 s), so a dead link fails in reasonable time.
     private static let maxHops = 8
 
+    /// A segment in a stream's history, numbered for players. Numbers keep growing across
+    /// restarts, so players never see the playlist go back.
+    private struct Segment {
+        /// Ace Link's number for it, which players use (segment URLs end in "<sequence>.ts").
+        let sequence: Int
+        let duration: Double
+        /// Where the engine serves it. Not unique: a restarted session numbers its segments
+        /// from 0 again under the same path, so segments are keyed by `sequence` instead.
+        let path: String
+        /// The session it came from (see `WarmUp.session`).
+        let session: Int
+        /// First segment of a restarted session: a new source for players.
+        let discontinuity: Bool
+    }
+
     private final class WarmUp {
         let created = Date()
         /// The engine manifest request (id/infohash + pid), to start the session again.
@@ -221,51 +237,48 @@ final class TVShare: ObservableObject {
             if client != "127.0.0.1" { lastTVRead = now }
         }
 
-        // Stall detection and restarts (see `relayPlaylist` and `restart`).
-        /// Last time the engine's playlist gained a segment.
-        var lastProgress = Date()
-        /// Media sequence + last segment of the engine playlist last seen, to spot progress.
-        var lastSignature: String?
-        /// A new session is being started under the hood; players get `cachedPlaylist`.
-        var restarting = false
-        var restarts = 0
-        var restartTimes: [Date] = []
-        /// The playlist last sent to players, served again while restarting.
-        var cachedPlaylist: Data?
-        /// Added to the engine's media sequence, so numbering keeps growing across restarts.
-        var sequenceOffset = 0
-        /// Media sequence of the last segment sent to players.
-        var lastOutputSequence = -1
-        /// The next playlist is the first of a restarted session.
-        var awaitingRestartedPlaylist = false
-        /// Engine media sequence of a restarted session's first segment, which gets a
-        /// discontinuity tag while it's in the playlist.
-        var discontinuityAt: Int?
-        /// The newest segments, fetched as soon as the playlist lists them, by engine path.
-        /// If the session dies, players can still get what the playlist already promised
-        /// (a missing segment makes TVs give up for good).
-        var segments: [String: Data] = [:]
-        var segmentOrder: [String] = []
-        var fetching: Set<String> = []
+        // The stream's own history of segments (see `refresh`). Players get playlists built
+        // from it, never the engine's, so it survives the session dying.
+        var history: [Segment] = []
+        /// Discontinuities that slid out of the history, for EXT-X-DISCONTINUITY-SEQUENCE.
+        var discontinuitiesDropped = 0
+        var nextSequence = 0
+        /// Newest engine media sequence taken from the current session.
+        var lastEngineSequence: Int?
+        /// The next segment taken starts a restarted session.
+        var pendingDiscontinuity = false
+        var targetDuration = 6
+        /// Reads the engine playlist every few seconds while the stream is alive.
+        var refresher: DispatchSourceTimer?
+        /// Counts the engine sessions this stream has had (bumped by each restart).
+        var session = 0
+        /// Segment contents, by sequence, for every segment in the history.
+        var segments: [Int: Data] = [:]
+        var fetching: Set<Int> = []
 
-        func store(_ data: Data, for path: String) {
-            if segments[path] == nil { segmentOrder.append(path) }
-            segments[path] = data
-            while segmentOrder.count > TVShare.cachedSegments {
-                segments[segmentOrder.removeFirst()] = nil
-            }
-        }
+        // Stall detection and restarts (see `restart`).
+        /// Last time the history gained a segment.
+        var lastProgress = Date()
+        /// A new session is being started under the hood.
+        var restarting = false
+        var restartTimes: [Date] = []
 
         init(manifest: URLComponents) {
             self.manifest = manifest
         }
     }
 
-    /// Segments kept per stream (about 3 MB each in HD).
-    fileprivate static let cachedSegments = 6
-
-    /// A stream being read whose playlist gains no segment for this long is stuck.
+    /// Seconds of segments listed in each playlist (at least `minimumSegments`). Generous on
+    /// purpose: a restarted session arrives with ~30 s of segments at once, and the ones from
+    /// before the restart that a TV hasn't fetched yet must still be listed, or it gives up.
+    fileprivate static let windowSeconds: TimeInterval = 60
+    /// Seconds kept in the history: the window shown, plus slack.
+    private static let retention: TimeInterval = windowSeconds + 15
+    /// A stream being read whose history gains no segment for this long is stuck.
     private static let stallSeconds: TimeInterval = 30
+    private static let minimumSegments = 3
+    private static let refreshEvery: DispatchTimeInterval = .seconds(2)
+
     /// Restarts allowed within `restartWindow` before giving up on a stream.
     private static let maxRestarts = 3
     private static let restartWindow: TimeInterval = 5 * 60
@@ -299,7 +312,8 @@ final class TVShare: ObservableObject {
         os_log("TV asks for %{public}@ (attempt %d)", String(hash.prefix(7)), hop + 1)
 
         func poll() {
-            if warmUp.readyPath != nil {
+            // Ready once there are segments to play.
+            if warmUp.readyPath != nil, Self.window(of: warmUp) != nil {
                 send(Self.redirect(to: "http://\(host):\(Self.port)/hls/\(hash)/index.m3u8"))
             } else if warmUp.failed {
                 send(Self.http(502, type: "text/plain", body: Data("Stream unavailable".utf8)))
@@ -342,10 +356,11 @@ final class TVShare: ObservableObject {
 
     // Players read a stream's playlist and segments through us rather than straight from
     // the engine. That costs a local hop, but it is the only way to know whether anyone is
-    // still watching: the engine has no API for it, and keeps a session it isn't asked
-    // about downloading forever. Paths:
-    //   /hls/<hash>/index.m3u8          the session's playlist, segment URLs rewritten
-    //   /hls/<hash>/seg/ace/...         a segment, fetched from the same engine path
+    // still watching (the engine has no API for it, and keeps a session it isn't asked
+    // about downloading forever). It also lets a stream survive its session dying. Paths:
+    //   /hls/<hash>/index.m3u8          a playlist built from the stream's history
+    //   /hls/<hash>/seg/<sequence>.ts   a segment by Ace Link's number, from the cache (or
+    //                                   the engine, while its session is the current one)
 
     private func proxy(
         path: String, rawQuery: String?, client: String, send: @escaping (Data) -> Void
@@ -354,157 +369,184 @@ final class TVShare: ObservableObject {
         guard let slash = rest.firstIndex(of: "/") else { return send(Self.notFound) }
         let hash = String(rest[..<slash]).lowercased()
         let tail = String(rest[rest.index(after: slash)...])
-        guard let warmUp = warmUps[hash], let readyPath = warmUp.readyPath,
-              let playlistURL = URL(string: AppConstants.Docker.baseURL.absoluteString + readyPath)
-        else {
-            // The session ended. Players then ask for the channel again (/play/...).
-            return send(Self.notFound)
+        guard let warmUp = warmUps[hash], warmUp.readyPath != nil else {
+            return send(Self.notFound) // The stream ended.
         }
         warmUp.markRead(by: client)
 
         if tail == "index.m3u8" {
-            if warmUp.restarting, let cached = warmUp.cachedPlaylist {
-                // A new session is starting; players wait on the last playlist meanwhile.
-                return send(Self.http(200, type: "application/vnd.apple.mpegurl", body: cached))
-            }
-            // Only the current session's playlist going missing means the stream is gone;
-            // after a restart, stragglers for the old one are expected.
-            let session = readyPath
-            relay(playlistURL, hash: hash, send: send, onMissing: {
-                self.sessionGone(hash: hash) { $0.readyPath == session }
-            }, fallback: {
-                // Never pass a playlist error on: players give up on it (seen on a TV). The
-                // last good playlist looks like a brief pause while the session restarts.
-                self.queue.sync { warmUp.cachedPlaylist }
-            }) { body in
-                self.queue.sync {
-                    self.relayPlaylist(String(decoding: body, as: UTF8.self),
-                                       from: playlistURL, warmUp: warmUp, hash: hash)
-                }
-            }
-        } else if tail.hasPrefix("seg/ace/") {
-            let enginePath = "/" + tail.dropFirst("seg/".count) + (rawQuery.map { "?" + $0 } ?? "")
-            if let cached = warmUp.segments[enginePath] {
+            // Built from the history, so it never fails: players give up on a playlist error
+            // for good (seen on TVs). If the session is restarting, it just doesn't grow.
+            let body = Self.playlist(of: warmUp, hash: hash)
+            send(Self.http(200, type: "application/vnd.apple.mpegurl", body: Data(body.utf8)))
+        } else if tail.hasPrefix("seg/"), tail.hasSuffix(".ts"),
+                  let sequence = Int(tail.dropFirst("seg/".count).dropLast(".ts".count)) {
+            if let cached = warmUp.segments[sequence] {
                 return send(Self.http(200, type: "video/mp2t", body: cached))
             }
-            guard let segmentURL = URL(string: AppConstants.Docker.baseURL.absoluteString + enginePath)
+            // Not fetched yet: only the current session can still give it. An older session's
+            // path now leads to a different segment of the new one.
+            guard let segment = warmUp.history.first(where: { $0.sequence == sequence }),
+                  segment.session == warmUp.session, !warmUp.restarting,
+                  let url = URL(string: AppConstants.Docker.baseURL.absoluteString + segment.path)
             else { return send(Self.notFound) }
-            relay(segmentURL, hash: hash, send: send, type: "video/mp2t",
-                  store: { data in self.queue.async { warmUp.store(data, for: enginePath) } })
+            engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
+                guard (response as? HTTPURLResponse)?.statusCode == 200, let data = data else {
+                    return send(Self.http(404, type: "text/plain", body: Data("Not found".utf8)))
+                }
+                self.queue.async {
+                    if warmUp.history.contains(where: { $0.sequence == sequence }) {
+                        warmUp.segments[sequence] = data
+                    }
+                }
+                send(Self.http(200, type: "video/mp2t", body: data))
+            }.resume()
         } else {
             send(Self.notFound)
         }
     }
 
-    /// Fetches `url` from the engine and passes it on, after `transform` if given.
-    private func relay(
-        _ url: URL, hash: String, send: @escaping (Data) -> Void,
-        type: String = "application/vnd.apple.mpegurl",
-        onMissing: (() -> Void)? = nil, store: ((Data) -> Void)? = nil,
-        fallback: (() -> Data?)? = nil, transform: ((Data) -> Data)? = nil
-    ) {
-        engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 502
-            guard status == 200, let data = data else {
-                if status == 404 { onMissing?() } // The engine dropped it.
-                if let replacement = fallback?() {
-                    return send(Self.http(200, type: type, body: replacement))
+    /// The segments a player gets: the last `windowSeconds` of the history. Nil while there
+    /// are none yet. On `queue`.
+    private static func window(of warmUp: WarmUp) -> ArraySlice<Segment>? {
+        let eligible = warmUp.history[...]
+        var start = eligible.endIndex
+        var shown: TimeInterval = 0
+        while start > eligible.startIndex,
+              shown < windowSeconds || eligible.endIndex - start < minimumSegments {
+            start -= 1
+            shown += eligible[start].duration
+        }
+        let window = eligible[start...]
+        return window.count >= min(minimumSegments, warmUp.history.count) && !window.isEmpty
+            ? window : nil
+    }
+
+    /// A live HLS playlist built from the stream's history. Numbering continues across
+    /// restarts, with discontinuities marking a new source.
+    private static func playlist(of warmUp: WarmUp, hash: String) -> String {
+        var lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:\(warmUp.targetDuration)"]
+        guard let window = window(of: warmUp), let first = window.first
+        else {
+            // Nothing yet: an empty live playlist makes players wait and ask again.
+            lines.append("#EXT-X-MEDIA-SEQUENCE:\(warmUp.nextSequence)")
+            return lines.joined(separator: "\n") + "\n"
+        }
+        let earlierDiscontinuities = warmUp.history.prefix { $0.sequence < first.sequence }
+            .filter(\.discontinuity).count
+        lines.append("#EXT-X-MEDIA-SEQUENCE:\(first.sequence)")
+        lines.append("#EXT-X-DISCONTINUITY-SEQUENCE:\(warmUp.discontinuitiesDropped + earlierDiscontinuities)")
+        for segment in window {
+            if segment.discontinuity { lines.append("#EXT-X-DISCONTINUITY") }
+            lines.append("#EXTINF:\(String(format: "%.3f", segment.duration)),")
+            lines.append("/hls/\(hash)/seg/\(segment.sequence).ts")
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Reads the engine playlist every few seconds, appends new segments to the history and
+    /// fetches them into the cache. Runs from the moment the session is ready.
+    private func startRefreshing(_ warmUp: WarmUp, hash: String) {
+        warmUp.refresher?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: Self.refreshEvery)
+        timer.setEventHandler { [weak self, weak warmUp] in
+            guard let self = self, let warmUp = warmUp else { return }
+            self.refresh(warmUp, hash: hash)
+        }
+        timer.resume()
+        warmUp.refresher = timer
+    }
+
+    private func refresh(_ warmUp: WarmUp, hash: String) {
+        guard !warmUp.restarting, let readyPath = warmUp.readyPath,
+              let playlistURL = URL(string: AppConstants.Docker.baseURL.absoluteString + readyPath)
+        else { return }
+        engineSession.dataTask(with: URLRequest(url: playlistURL, timeoutInterval: 10)) { data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            self.queue.async {
+                // Only news about the current session counts (a restart may have replaced it).
+                guard warmUp.readyPath == readyPath, !warmUp.restarting else { return }
+                if status == 404 {
+                    self.sessionGone(hash: hash) { $0 === warmUp }
+                } else if status == 200, let data = data {
+                    self.ingest(String(decoding: data, as: UTF8.self), from: playlistURL, into: warmUp)
                 }
-                return send(Self.http(status == 404 ? 404 : 502, type: "text/plain",
-                                      body: Data("Stream unavailable".utf8)))
             }
-            store?(data)
-            send(Self.http(200, type: type, body: transform?(data) ?? data))
         }.resume()
     }
 
-    /// Rewrites an engine playlist for players: segments point at the relay, numbering
-    /// continues across restarts, and a restarted session's first segment is marked as a
-    /// discontinuity (a new source). Also tracks progress for stall detection. On `queue`.
-    private func relayPlaylist(
-        _ playlist: String, from playlistURL: URL, warmUp: WarmUp, hash: String
-    ) -> Data {
-        let lines = Self.rewrite(playlist: playlist, from: playlistURL, hash: hash)
-            .components(separatedBy: "\n")
-        let engineSequence = lines.lazy.compactMap { line -> Int? in
-            guard line.hasPrefix("#EXT-X-MEDIA-SEQUENCE:") else { return nil }
-            return Int(line.dropFirst("#EXT-X-MEDIA-SEQUENCE:".count).trimmingCharacters(in: .whitespaces))
-        }.first ?? 0
-        let segments = lines.filter { !$0.isEmpty && !$0.hasPrefix("#") }
-        prefetch(playlist, from: playlistURL, warmUp: warmUp)
-
-        if warmUp.awaitingRestartedPlaylist {
-            // Carry on right after the last segment players got.
-            warmUp.awaitingRestartedPlaylist = false
-            warmUp.sequenceOffset = warmUp.lastOutputSequence + 1 - engineSequence
-            warmUp.discontinuityAt = engineSequence
-        }
-        let signature = "\(engineSequence)|\(segments.last ?? "")"
-        if signature != warmUp.lastSignature {
-            warmUp.lastSignature = signature
-            warmUp.lastProgress = Date()
-        }
-        if !segments.isEmpty {
-            warmUp.lastOutputSequence = warmUp.sequenceOffset + engineSequence + segments.count - 1
-        }
-
-        // The discontinuity stays tagged while its segment is in the window; once it slides
-        // out, the discontinuity sequence counts it.
-        let lastSequence = engineSequence + segments.count - 1
-        let tagged = warmUp.discontinuityAt.map { $0 >= engineSequence && $0 <= lastSequence } ?? false
-        var output: [String] = []
-        var sequence = engineSequence
-        var wroteHeader = false
-        for line in lines {
-            if line.hasPrefix("#EXT-X-MEDIA-SEQUENCE:") || line.hasPrefix("#EXT-X-DISCONTINUITY-SEQUENCE:") {
-                continue // Written below, renumbered.
+    /// Takes the segments of an engine playlist that are new into the history. On `queue`.
+    private func ingest(_ playlist: String, from playlistURL: URL, into warmUp: WarmUp) {
+        var engineSequence = 0
+        var duration: Double?
+        var added = false
+        for raw in playlist.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("#EXT-X-MEDIA-SEQUENCE:") {
+                engineSequence = Int(line.dropFirst("#EXT-X-MEDIA-SEQUENCE:".count)) ?? 0
+            } else if line.hasPrefix("#EXT-X-TARGETDURATION:") {
+                warmUp.targetDuration = Int(line.dropFirst("#EXT-X-TARGETDURATION:".count)) ?? 6
+            } else if line.hasPrefix("#EXTINF:") {
+                duration = Double(line.dropFirst("#EXTINF:".count).prefix { $0 != "," })
+            } else if !line.isEmpty, !line.hasPrefix("#") {
+                defer { engineSequence += 1; duration = nil }
+                guard engineSequence > (warmUp.lastEngineSequence ?? -1),
+                      let url = URL(string: line, relativeTo: playlistURL)?.absoluteURL
+                else { continue }
+                let segment = Segment(
+                    sequence: warmUp.nextSequence, duration: duration ?? Double(warmUp.targetDuration),
+                    path: url.path + (url.query.map { "?" + $0 } ?? ""), session: warmUp.session,
+                    discontinuity: warmUp.pendingDiscontinuity
+                )
+                warmUp.history.append(segment)
+                warmUp.nextSequence += 1
+                warmUp.pendingDiscontinuity = false
+                warmUp.lastEngineSequence = engineSequence
+                added = true
+                fetchSegment(segment, into: warmUp)
             }
-            if !wroteHeader, line.hasPrefix("#EXTINF") || (!line.isEmpty && !line.hasPrefix("#")) {
-                output.append("#EXT-X-MEDIA-SEQUENCE:\(warmUp.sequenceOffset + engineSequence)")
-                if warmUp.restarts > 0 {
-                    output.append("#EXT-X-DISCONTINUITY-SEQUENCE:\(warmUp.restarts - (tagged ? 1 : 0))")
-                }
-                wroteHeader = true
-            }
-            if line.hasPrefix("#EXTINF"), tagged, sequence == warmUp.discontinuityAt {
-                output.append("#EXT-X-DISCONTINUITY")
-            }
-            output.append(line)
-            if !line.isEmpty, !line.hasPrefix("#") { sequence += 1 }
         }
-        let data = Data(output.joined(separator: "\n").utf8)
-        warmUp.cachedPlaylist = data
-        return data
+        guard added else { return }
+        warmUp.lastProgress = Date()
+        // Keep `retention` seconds, and the cache to match.
+        var kept: TimeInterval = 0
+        var firstKept = warmUp.history.endIndex
+        while firstKept > warmUp.history.startIndex, kept < Self.retention {
+            firstKept -= 1
+            kept += warmUp.history[firstKept].duration
+        }
+        let dropped = warmUp.history[..<firstKept]
+        warmUp.discontinuitiesDropped += dropped.filter(\.discontinuity).count
+        for segment in dropped { warmUp.segments[segment.sequence] = nil }
+        warmUp.history.removeFirst(firstKept)
     }
 
-    /// Fetches the newest segments an engine playlist lists into the stream's cache, so they
-    /// survive the session dying before players ask for them. On `queue`.
-    private func prefetch(_ playlist: String, from playlistURL: URL, warmUp: WarmUp) {
-        let paths = playlist.components(separatedBy: "\n").compactMap { line -> String? in
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !trimmed.hasPrefix("#"),
-                  let url = URL(string: trimmed, relativeTo: playlistURL)?.absoluteURL
-            else { return nil }
-            return url.path + (url.query.map { "?" + $0 } ?? "")
-        }
-        for path in paths.suffix(Self.cachedSegments)
-            where warmUp.segments[path] == nil && !warmUp.fetching.contains(path) {
-            guard let url = URL(string: AppConstants.Docker.baseURL.absoluteString + path)
-            else { continue }
-            warmUp.fetching.insert(path)
-            engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
-                let ok = (response as? HTTPURLResponse)?.statusCode == 200
-                self.queue.async {
-                    warmUp.fetching.remove(path)
-                    if ok, let data = data { warmUp.store(data, for: path) }
-                }
-            }.resume()
-        }
+    /// Fetches a segment into the cache as soon as the history has it, so it survives the
+    /// session dying before players ask for it (a missing segment makes TVs give up).
+    private func fetchSegment(_ segment: Segment, into warmUp: WarmUp) {
+        let sequence = segment.sequence
+        guard warmUp.segments[sequence] == nil, !warmUp.fetching.contains(sequence),
+              let url = URL(string: AppConstants.Docker.baseURL.absoluteString + segment.path)
+        else { return }
+        warmUp.fetching.insert(sequence)
+        engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
+            let ok = (response as? HTTPURLResponse)?.statusCode == 200
+            self.queue.async {
+                warmUp.fetching.remove(sequence)
+                // Only if its session is still the one at that path; else it's another segment.
+                guard ok, let data = data, segment.session == warmUp.session,
+                      warmUp.history.contains(where: { $0.sequence == sequence })
+                else { return }
+                warmUp.segments[sequence] = data
+            }
+        }.resume()
     }
 
     /// Starts a stuck stream's session again under the hood: players keep the same playlist
-    /// URL and get the new session's segments after a discontinuity. Gives up (ends the
-    /// session) after `maxRestarts` within `restartWindow`. Only call on `queue`.
+    /// URL, which keeps serving the history, then the new session's segments after a
+    /// discontinuity. Gives up (ends the session) after `maxRestarts` within
+    /// `restartWindow`. Only call on `queue`.
     private func restart(_ warmUp: WarmUp, hash: String, reason: String) {
         let now = Date()
         warmUp.restartTimes = warmUp.restartTimes.filter { now.timeIntervalSince($0) < Self.restartWindow }
@@ -513,8 +555,15 @@ final class TVShare: ObservableObject {
             return end(warmUp, hash: hash)
         }
         warmUp.restartTimes.append(now)
-        warmUp.restarts += 1
         warmUp.restarting = true
+        warmUp.session += 1
+        // The newest segments of the old session that weren't fetched in time are gone with
+        // it: unlist them (and reuse their numbers), so no player asks for one and gets a 404.
+        while let last = warmUp.history.last, warmUp.segments[last.sequence] == nil {
+            warmUp.history.removeLast()
+            warmUp.nextSequence = last.sequence
+        }
+        warmUp.fetching.removeAll()
         os_log("Stream %{public}@ is stuck (%{public}@); restarting its session (%d/%d).",
                String(hash.prefix(7)), reason, warmUp.restartTimes.count, Self.maxRestarts)
         let command = warmUp.commandURL
@@ -539,23 +588,13 @@ final class TVShare: ObservableObject {
                warmUp.readyPath != nil {
                 self.restart(warmUp, hash: hash, reason: "the engine ended its session")
             } else {
-                self.warmUps[hash] = nil
+                self.end(warmUp, hash: hash)
             }
         }
     }
 
-    /// Points every segment of an engine playlist at the relay.
-    static func rewrite(playlist: String, from playlistURL: URL, hash: String) -> String {
-        playlist.components(separatedBy: "\n").map { line -> String in
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !trimmed.hasPrefix("#"),
-                  let url = URL(string: trimmed, relativeTo: playlistURL)?.absoluteURL
-            else { return line }
-            return "/hls/\(hash)/seg\(url.path)" + (url.query.map { "?" + $0 } ?? "")
-        }.joined(separator: "\n")
-    }
-
-    /// Ends the sessions nobody has read for `idleSeconds`, and forgets failed warm-ups.
+    /// Ends the sessions nobody has read for `idleSeconds`, restarts stuck ones, and forgets
+    /// failed warm-ups.
     private func sweepIdleSessions() {
         let now = Date()
         for (hash, warmUp) in warmUps {
@@ -575,7 +614,9 @@ final class TVShare: ObservableObject {
 
     /// Ends a stream's engine session and forgets it. Only touch on `queue`.
     private func end(_ warmUp: WarmUp, hash: String) {
-        warmUps[hash] = nil
+        warmUp.refresher?.cancel()
+        warmUp.refresher = nil
+        if warmUps[hash] === warmUp { warmUps[hash] = nil }
         guard let command = warmUp.commandURL else { return }
         engineSession.dataTask(with: command.appendingQuery("method", "stop")).resume()
     }
@@ -642,14 +683,15 @@ final class TVShare: ObservableObject {
                    body.contains("#EXTINF"), let url = http.url {
                     warmUp.readyPath = url.path + (url.query.map { "?" + $0 } ?? "")
                     warmUp.lastProgress = Date()
-                    warmUp.lastSignature = nil
+                    warmUp.lastEngineSequence = nil // A new session numbers from its own start.
                     if warmUp.restarting {
                         warmUp.restarting = false
-                        warmUp.awaitingRestartedPlaylist = true
+                        warmUp.pendingDiscontinuity = true
                         os_log("TV stream %{public}@ restarted", String(hash.prefix(7)))
                     } else {
                         os_log("TV stream %{public}@ ready", String(hash.prefix(7)))
                     }
+                    self.startRefreshing(warmUp, hash: hash)
                     self.fetchStatURL(for: warmUp, manifest: warmUp.manifest)
                 } else if warmUp.restarting {
                     os_log("TV stream %{public}@ didn't come back; giving up.", String(hash.prefix(7)))

@@ -487,8 +487,14 @@ struct LinkRow: View {
                     .buttonStyle(.plain)
                     .help("Stop this stream")
                 } else {
-                    Image(systemName: "play.circle.fill")
-                        .foregroundColor(hover.isHovering ? .accentColor : .secondary)
+                    // A single click on the play button plays; elsewhere the row needs a
+                    // double click, so selecting or right-clicking doesn't start a stream.
+                    Button(action: onPlay) {
+                        Image(systemName: "play.circle.fill")
+                            .foregroundColor(hover.isHovering ? .accentColor : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Play. ⌥-click to play alongside what's playing.")
                 }
             }
             .font(.system(size: 22))
@@ -522,8 +528,8 @@ struct LinkRow: View {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onHover { hover.isHovering = $0 }
-        .onTapGesture(perform: onPlay)
-        .help("Click to play in your media player. ⌥-click to play alongside what's playing.")
+        .onTapGesture(count: 2, perform: onPlay)
+        .help("Double-click to play in your media player. ⌥-double-click to play alongside what's playing.")
     }
 
     /// When an availability check last found the link working. "Never seen" only once a

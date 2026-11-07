@@ -171,12 +171,13 @@ final class ChannelsUIState: ObservableObject {
     @Published var bulkAdd: BulkAddTarget?
     @Published var channelPendingDelete: Channel?
     @Published var showTVPanel = false
+    @Published var editingRemoteURL = false
     /// The channel a link drag is hovering over in the sidebar.
     @Published var dropTarget: UUID?
 }
 
-/// Local/Remote switch, shown in the title bar left of the sidebar button. It turns red, with
-/// a warning, when the remote list could not be updated (the saved copy is shown meanwhile).
+/// Local/Remote switch, at the left of the sidebar's bottom bar. It turns red, with a
+/// warning, when the remote list could not be updated (the saved copy is shown meanwhile).
 struct SourceSwitch: View {
     @ObservedObject var remote = RemoteList.shared
     @AppStorage("showRemoteList") private var showRemote = false
@@ -197,7 +198,42 @@ struct SourceSwitch: View {
                     .help("Could not update the remote list: \(message). Showing the saved copy.")
             }
         }
-        .padding(.horizontal, 8)
+    }
+}
+
+/// Asks for the address of the remote m3u list.
+struct RemoteURLEditor: View {
+    let initial: String
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var text = ""
+
+    private var isValid: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || RemoteList.validURL(text) != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Remote m3u URL").font(.headline)
+            TextField("https://…/list.m3u", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 380)
+                .onSubmit { if isValid { onSave(text) } }
+            Text("An http(s) address of an m3u playlist. Channels are grouped by group-title.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
+                Button("Save") { onSave(text) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!isValid)
+            }
+        }
+        .padding(20)
+        .onAppear { text = initial }
     }
 }
 
@@ -270,6 +306,16 @@ struct ChannelsView: View {
                 }
                 .help("Play the AceStream link currently on your clipboard")
             }
+        }
+        .sheet(isPresented: $ui.editingRemoteURL) {
+            RemoteURLEditor(
+                initial: remote.urlString,
+                onSave: { text in
+                    remote.setURL(text)
+                    ui.editingRemoteURL = false
+                },
+                onCancel: { ui.editingRemoteURL = false }
+            )
         }
         .sheet(item: $ui.editingChannel) { channel in
             ChannelEditor(
@@ -357,41 +403,51 @@ struct ChannelsView: View {
         }
     }
 
-    @ViewBuilder
     private var newChannelBar: some View {
-        if showRemote {
-            HStack(spacing: 6) {
-                switch remote.state {
-                case .loading:
-                    ProgressView().controlSize(.small)
-                    Text("Updating…")
-                case let .updated(date):
-                    Text("Updated \(date.formatted(date: .omitted, time: .shortened))")
-                case .failed:
-                    Text("Not updated").foregroundColor(.red)
-                case .idle:
-                    EmptyView()
-                }
-                Spacer()
-                Button(action: remote.refresh) { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless)
-                    .disabled(remote.state == .loading)
-                    .help("Update the remote list")
-            }
-            .font(.callout)
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 10)
-        } else {
-            HStack {
+        HStack(spacing: 6) {
+            if showRemote {
+                remoteStatus.font(.callout).foregroundColor(.secondary)
+            } else {
                 Button {
                     ui.editingChannel = Channel(name: "")
                 } label: {
                     Label("New Channel", systemImage: "plus")
                 }
                 .buttonStyle(.borderless)
-                Spacer()
             }
-            .padding(.horizontal, 10)
+            Spacer(minLength: 0)
+            SourceSwitch()
+            // Same spot for both: refresh on the remote list, its address when local.
+            Group {
+                if showRemote {
+                    Button(action: remote.refresh) { Image(systemName: "arrow.clockwise") }
+                        .disabled(remote.state == .loading || remote.url == nil)
+                        .help("Update the remote list")
+                } else {
+                    Button { ui.editingRemoteURL = true } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .help("Remote m3u URL")
+                }
+            }
+            .buttonStyle(.borderless)
+            .frame(width: 16)
+        }
+        .padding(.horizontal, 10)
+    }
+
+    @ViewBuilder
+    private var remoteStatus: some View {
+        switch remote.state {
+        case .loading:
+            ProgressView().controlSize(.small)
+            Text("Updating…")
+        case let .updated(date):
+            Text("Updated \(date.formatted(date: .omitted, time: .shortened))")
+        case .failed:
+            Text("Not updated").foregroundColor(.red)
+        case .idle:
+            if remote.url == nil { Text("No URL set") }
         }
     }
 
@@ -668,7 +724,6 @@ struct ChannelDetailView: View {
                 .background(OutsideClickMonitor { selection = [] })
             }
         }
-        .navigationTitle(channel.name)
     }
 
     private var header: some View {

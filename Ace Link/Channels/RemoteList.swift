@@ -20,10 +20,21 @@ final class RemoteList: ObservableObject {
         return nil
     }
 
-    /// TODO: define how the URL is configured (setting, import, …). Hard-coded for now.
-    static let url = URL(
-        string: "https://tokyo.elcano-ipfs.workers.dev/k51qzi5uqu5dh5qej4b9wlcr5i6vhc7rcfkekhrxqek5c9lk6gdaiik820fecs/hashes_acestream.m3u"
-    )
+    private static let urlKey = "remoteListURL"
+
+    /// The m3u address, set in the sidebar's "Remote m3u URL" dialog. Empty until then.
+    @Published private(set) var urlString = UserDefaults.standard.string(forKey: urlKey) ?? ""
+
+    var url: URL? { Self.validURL(urlString) }
+
+    /// An http(s) address, or nil.
+    static func validURL(_ text: String) -> URL? {
+        guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              url.host != nil
+        else { return nil }
+        return url
+    }
 
     @Published private(set) var state = State.idle
     /// In memory only: the list is read from the m3u copy, never edited.
@@ -39,8 +50,16 @@ final class RemoteList: ObservableObject {
         refresh()
     }
 
+    /// Saves the address and loads the list from it. An empty address just clears it.
+    func setURL(_ text: String) {
+        urlString = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        UserDefaults.standard.set(urlString, forKey: Self.urlKey)
+        state = .idle
+        refresh()
+    }
+
     func refresh() {
-        guard state != .loading, let url = Self.url else { return }
+        guard state != .loading, let url = url else { return }
         state = .loading
         Task { @MainActor in
             do {
@@ -56,15 +75,17 @@ final class RemoteList: ObservableObject {
                 }
                 let channels = Self.parse(text)
                 guard !channels.isEmpty else { throw RemoteError("The playlist has no links") }
-                store.channels = channels
                 try? FileManager.default.createDirectory(
                     at: ChannelStore.baseDir, withIntermediateDirectories: true
                 )
+                // The address changed while downloading: this answer is for the old one.
+                guard url == self.url else { return }
+                store.channels = channels
                 try? data.write(to: Self.cacheURL, options: .atomic)
                 state = .updated(Date())
             } catch {
                 os_log("Cannot update the remote list: %{public}@", error.localizedDescription)
-                state = .failed(error.localizedDescription)
+                if url == self.url { state = .failed(error.localizedDescription) }
             }
         }
     }

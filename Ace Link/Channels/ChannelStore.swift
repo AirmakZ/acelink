@@ -165,6 +165,29 @@ final class ChannelStore: ObservableObject {
         channels[index].links.move(fromOffsets: source, toOffset: destination)
     }
 
+    /// Moves links (in their current order) from one channel to another, or within the
+    /// same channel. `index` is the insertion offset in the destination as shown before the
+    /// move; nil appends.
+    func move(linkIDs: Set<UUID>, from sourceID: UUID, to destinationID: UUID, at index: Int? = nil) {
+        guard let source = channels.firstIndex(where: { $0.id == sourceID }),
+              let destination = channels.firstIndex(where: { $0.id == destinationID })
+        else { return }
+        let moving = channels[source].links.filter { linkIDs.contains($0.id) }
+        guard !moving.isEmpty else { return }
+
+        var updated = channels // Edit a copy so the file is saved once.
+        var insertAt = index ?? updated[destination].links.count
+        if source == destination {
+            // Links removed above the insertion point shift it up.
+            let before = updated[source].links.prefix(insertAt).filter { linkIDs.contains($0.id) }
+            insertAt -= before.count
+        }
+        updated[source].links.removeAll { linkIDs.contains($0.id) }
+        insertAt = min(max(insertAt, 0), updated[destination].links.count)
+        updated[destination].links.insert(contentsOf: moving, at: insertAt)
+        channels = updated
+    }
+
     // MARK: - Icons
 
     /// Copies an image into the icons directory as a 256px PNG and returns its file name.

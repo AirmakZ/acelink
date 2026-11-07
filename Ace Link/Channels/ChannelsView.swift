@@ -8,6 +8,138 @@ struct LinkEditTarget: Identifiable {
     var id: UUID { link.id }
 }
 
+/// What a drag of links carries: the channel they come from and their IDs, as plain text.
+struct LinkDragPayload {
+    private static let prefix = "acelink-links:"
+    let channelID: UUID
+    let linkIDs: Set<UUID>
+
+    var provider: NSItemProvider {
+        let ids = linkIDs.map(\.uuidString).joined(separator: ",")
+        return NSItemProvider(object: "\(Self.prefix)\(channelID.uuidString):\(ids)" as NSString)
+    }
+
+    init(channelID: UUID, linkIDs: Set<UUID>) {
+        self.channelID = channelID
+        self.linkIDs = linkIDs
+    }
+
+    init?(text: String) {
+        guard text.hasPrefix(Self.prefix) else { return nil }
+        let parts = text.dropFirst(Self.prefix.count).split(separator: ":", maxSplits: 1)
+        guard parts.count == 2, let channel = UUID(uuidString: String(parts[0])) else { return nil }
+        let ids = parts[1].split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+        guard !ids.isEmpty else { return nil }
+        self.init(channelID: channel, linkIDs: Set(ids))
+    }
+
+    /// Reads the payload from dropped providers and calls `completion` on the main thread.
+    static func load(from providers: [NSItemProvider], completion: @escaping (LinkDragPayload) -> Void) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) })
+        else { return false }
+        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let text = object as? String, let payload = LinkDragPayload(text: text) else { return }
+            DispatchQueue.main.async { completion(payload) }
+        }
+        return true
+    }
+}
+
+/// What follows the cursor while dragging links: up to three stacked names and, for
+/// several links, a count badge.
+private struct LinkDragPreview: View {
+    let names: [String]
+    let count: Int
+
+    var body: some View {
+        let shown = Array(names.prefix(3))
+        ZStack(alignment: .topTrailing) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, name in
+                    Text(name.isEmpty ? "Untitled link" : name)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .frame(width: 200, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(.regularMaterial))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor.opacity(0.6)))
+                }
+                if count > shown.count {
+                    Text("+ \(count - shown.count) more").font(.caption).foregroundColor(.secondary)
+                }
+            }
+            .padding(8)
+            if count > 1 {
+                Text("\(count)")
+                    .font(.caption.bold())
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor))
+            }
+        }
+    }
+}
+
+/// Calls `onOutsideClick` when the mouse is pressed in the window anywhere outside the view
+/// this is placed behind. Used to clear the link selection.
+private struct OutsideClickMonitor: NSViewRepresentable {
+    let onOutsideClick: () -> Void
+
+    final class MonitorView: NSView {
+        var monitor: Any?
+        var onOutsideClick: () -> Void = {}
+
+        func install() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+                if let self = self, event.window != nil, event.window === self.window,
+                   !self.convert(self.bounds, to: nil).contains(event.locationInWindow) {
+                    DispatchQueue.main.async { self.onOutsideClick() }
+                }
+                return event
+            }
+        }
+
+        func remove() {
+            if let monitor = monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+    }
+
+    func makeNSView(context: Context) -> MonitorView {
+        let view = MonitorView()
+        view.onOutsideClick = onOutsideClick
+        view.install()
+        return view
+    }
+
+    func updateNSView(_ view: MonitorView, context: Context) {
+        view.onOutsideClick = onOutsideClick
+    }
+
+    static func dismantleNSView(_ view: MonitorView, coordinator: ()) {
+        view.remove()
+    }
+}
+
+/// Lets links be dropped on a channel in the sidebar, highlighting it meanwhile.
+private struct LinkDropDelegate: DropDelegate {
+    let channelID: UUID
+    @Binding var targeted: UUID?
+    let onDrop: (LinkDragPayload) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.plainText]) }
+    func dropEntered(info: DropInfo) { targeted = channelID }
+    func dropExited(info: DropInfo) { if targeted == channelID { targeted = nil } }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        targeted = nil
+        return LinkDragPayload.load(from: info.itemProviders(for: [.plainText]), completion: onDrop)
+    }
+}
+
 struct PlaybackActions {
     var play: (StreamLink) -> Void
     var playAlongside: (StreamLink) -> Void
@@ -33,6 +165,8 @@ final class ChannelsUIState: ObservableObject {
     @Published var bulkAdd: BulkAddTarget?
     @Published var channelPendingDelete: Channel?
     @Published var showTVPanel = false
+    /// The channel a link drag is hovering over in the sidebar.
+    @Published var dropTarget: UUID?
 }
 
 struct ChannelsView: View {
@@ -208,7 +342,21 @@ struct ChannelsView: View {
                     )
                 }
                 .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.accentColor.opacity(ui.dropTarget == channel.id ? 0.3 : 0))
+                        .padding(.horizontal, -6)
+                )
                 .tag(channel.id)
+                .onDrop(
+                    of: [.plainText],
+                    delegate: LinkDropDelegate(
+                        channelID: channel.id,
+                        targeted: Binding(get: { ui.dropTarget }, set: { ui.dropTarget = $0 })
+                    ) { payload in
+                        store.move(linkIDs: payload.linkIDs, from: payload.channelID, to: channel.id)
+                    }
+                )
                 .contextMenu {
                     Button("Edit Channel…") { ui.editingChannel = channel }
                     Button("Add Link…") {
@@ -264,6 +412,33 @@ struct ChannelDetailView: View {
     let onEditLink: (LinkEditTarget) -> Void
     let onBulkAdd: () -> Void
 
+    @State private var selection = Set<UUID>()
+    /// Where a ⇧-click range starts.
+    @State private var anchor: UUID?
+
+    /// The names of the links a drag from `link` carries, in list order.
+    private func dragNames(for link: StreamLink) -> [String] {
+        guard selection.contains(link.id) else { return [link.name] }
+        return channel.links.filter { selection.contains($0.id) }.map(\.name)
+    }
+
+    /// Click selects, ⌘-click adds or removes, ⇧-click selects the range from the anchor.
+    private func select(_ link: StreamLink) {
+        let flags = NSEvent.modifierFlags
+        let links = channel.links
+        if flags.contains(.command) {
+            if selection.contains(link.id) { selection.remove(link.id) } else { selection.insert(link.id) }
+            anchor = link.id
+        } else if flags.contains(.shift), let anchor = anchor,
+                  let from = links.firstIndex(where: { $0.id == anchor }),
+                  let to = links.firstIndex(where: { $0.id == link.id }) {
+            selection = Set(links[min(from, to)...max(from, to)].map(\.id))
+        } else {
+            selection = [link.id]
+            anchor = link.id
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -280,6 +455,8 @@ struct ChannelDetailView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                // Selection is drawn by hand (see `select`) because the native highlight
+                // can't be made softer.
                 List {
                     ForEach(channel.links) { link in
                         LinkRow(
@@ -300,12 +477,33 @@ struct ChannelDetailView: View {
                         )
                         // A soft green behind every link being watched, on this Mac or on
                         // another device, so playing links stand out at a glance.
+                        // Selected links get a soft blue on top of that.
                         .listRowBackground(
-                            link.stream.flatMap { nowPlaying.stream(hash: $0.hash) } == nil ? nil
-                                : RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color.green.opacity(0.14))
-                                    .padding(.horizontal, 4)
+                            ZStack {
+                                if link.stream.flatMap({ nowPlaying.stream(hash: $0.hash) }) != nil {
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color.green.opacity(0.14))
+                                        .padding(.horizontal, 4)
+                                }
+                                if selection.contains(link.id) {
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color.accentColor.opacity(0.22))
+                                        .padding(.horizontal, 4)
+                                }
+                            }
                         )
+                        // Simultaneous with the row's double click, so it reacts at once.
+                        .simultaneousGesture(TapGesture().onEnded { select(link) })
+                        // Dragging a selected link takes the whole selection with it.
+                        .onDrag {
+                            let ids = selection.contains(link.id) ? selection : [link.id]
+                            return LinkDragPayload(channelID: channel.id, linkIDs: ids).provider
+                        } preview: {
+                            LinkDragPreview(
+                                names: dragNames(for: link),
+                                count: selection.contains(link.id) ? max(selection.count, 1) : 1
+                            )
+                        }
                         .contextMenu {
                             if status.playingLinkIDs.contains(link.id) {
                                 Button("Stop") { actions.stopLink(link.id) }
@@ -331,7 +529,16 @@ struct ChannelDetailView: View {
                             }
                         }
                     }
-                    .onMove { store.moveLinks(in: channel.id, from: $0, to: $1) }
+                    // Reordering goes through the same drag payload as moving to another
+                    // channel, so it works for several selected links at once.
+                    .onInsert(of: [.plainText]) { index, providers in
+                        _ = LinkDragPayload.load(from: providers) { payload in
+                            store.move(
+                                linkIDs: payload.linkIDs, from: payload.channelID,
+                                to: channel.id, at: index
+                            )
+                        }
+                    }
                     .onDelete { offsets in
                         for index in offsets {
                             store.delete(linkID: channel.links[index].id, in: channel.id)
@@ -339,6 +546,7 @@ struct ChannelDetailView: View {
                     }
                 }
                 .listStyle(.inset)
+                .background(OutsideClickMonitor { selection = [] })
             }
         }
         .navigationTitle(channel.name)
@@ -528,7 +736,9 @@ struct LinkRow: View {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onHover { hover.isHovering = $0 }
-        .onTapGesture(count: 2, perform: onPlay)
+        // Simultaneous, so the list selects on the first click instead of waiting to see
+        // whether a second click follows.
+        .simultaneousGesture(TapGesture(count: 2).onEnded(onPlay))
         .help("Double-click to play in your media player. ⌥-double-click to play alongside what's playing.")
     }
 

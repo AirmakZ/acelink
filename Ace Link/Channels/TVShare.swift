@@ -159,11 +159,14 @@ final class TVShare: ObservableObject {
             ?? Self.localIPAddress() ?? "127.0.0.1"
 
         if path == Self.playlistPath || path == "/" {
-            let (channels, hidden) = DispatchQueue.main.sync {
-                (ChannelStore.shared.channels, hideDeadLinks ? Self.deadLinkIDs() : [])
+            // Read the channels on the main thread without waiting for it: the main thread
+            // also waits on `queue` (viewers(), connecting()…), and waiting both ways deadlocks.
+            DispatchQueue.main.async {
+                let hidden = self.hideDeadLinks ? Self.deadLinkIDs() : []
+                let body = Self.playlist(channels: ChannelStore.shared.channels, host: host, hiding: hidden)
+                send(Self.http(200, type: "audio/x-mpegurl; charset=utf-8", body: Data(body.utf8)))
             }
-            let body = Self.playlist(channels: channels, host: host, hiding: hidden)
-            return send(Self.http(200, type: "audio/x-mpegurl; charset=utf-8", body: Data(body.utf8)))
+            return
         }
 
         if path.hasPrefix("/play/") {
@@ -338,6 +341,22 @@ final class TVShare: ObservableObject {
                 let active = warmUp.readers
                     .filter { now.timeIntervalSince($0.value) < Self.idleSeconds }.keys.sorted()
                 return active.isEmpty ? nil : active
+            }
+        }
+    }
+
+    /// Streams a TV (or the Mac's player) is waiting for, by hash: who asked and what's going
+    /// on, until they play. Restarting streams count too.
+    func connecting() -> [String: (readers: [String], message: String)] {
+        queue.sync {
+            let now = Date()
+            return warmUps.compactMapValues { warmUp in
+                let starting = warmUp.readyPath == nil && !warmUp.failed
+                guard starting || warmUp.restarting else { return nil }
+                let readers = warmUp.readers
+                    .filter { now.timeIntervalSince($0.value) < Self.idleSeconds }.keys.sorted()
+                let seconds = Int(now.timeIntervalSince(warmUp.created))
+                return (readers, warmUp.restarting ? "Reconnecting…" : "Connecting… \(seconds) s")
             }
         }
     }

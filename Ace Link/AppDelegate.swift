@@ -100,6 +100,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         guard !isDuplicate else { return }
 
+        // Show a stream's progress as soon as it starts opening.
+        status.onChange = { [weak self] in self?.refreshNowPlaying() }
+
         // Who watches what: the relay's readers change without any event, so check often.
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refreshNowPlaying()
@@ -185,6 +188,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 playAlongside: { [weak self] link in self?.play(link: link, alongside: true) },
                 stopLink: { [weak self] in self?.stopPlaying(linkID: $0) },
                 stopStream: { [weak self] in self?.stopPlaying(hash: $0) },
+                cancelOpening: { [weak self] in self?.cancelOpening() },
                 playFromClipboard: { [weak self] in self?.playFromClipboard() },
                 stop: { [weak self] in self?.stopPlayback() },
                 checkAvailability: { [weak self] in self?.checkAvailability(channelID: $0) },
@@ -235,6 +239,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// so the engine stops downloading it. Other streams (and the TV) keep playing.
     func stopPlaying(linkID: UUID) {
         stopPlayers { $0.linkID == linkID }
+    }
+
+    /// Cancels the stream being opened on the Mac, leaving what already plays alone.
+    func cancelOpening() {
+        guard players.isEmpty else {
+            generation += 1 // Callbacks of the opening see it and bail out.
+            loading.stop()
+            status.activeLinkID = nil
+            status.dismiss()
+            return
+        }
+        stopPlayback() // Nothing else plays: same as Stop.
     }
 
     /// Stops a stream playing on the Mac, from the Now Playing bar. A TV keeps playing.
@@ -373,7 +389,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Checks every link of a channel, or only `linkID` when given.
     func checkAvailability(channelID: UUID, linkID: UUID? = nil) {
-        guard var channel = ChannelStore.shared.channel(id: channelID),
+        guard var channel = ChannelStore.shared.channel(id: channelID)
+                ?? RemoteList.shared.store.channel(id: channelID),
               !checker.isRunning, !status.isBusy else { return }
         if let linkID = linkID {
             channel.links = channel.links.filter { $0.id == linkID }
@@ -449,6 +466,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if !singleLink {
                     withAnimation {
                         ChannelStore.shared.sortLinks(in: channelID, by: outcome)
+                        RemoteList.shared.store.sortLinks(in: channelID, by: outcome)
                     }
                 }
                 self.finishCheck()
@@ -924,6 +942,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        // Streams still connecting: on a TV (or restarting), and the one opening on this Mac.
+        var connecting: [String: String] = [:]
+        if tv.isEnabled {
+            let ownAddresses = Set(["127.0.0.1"] + [TVShare.localIPAddress()].compactMap { $0 })
+            for (hash, waiting) in tv.connecting() {
+                connecting[hash] = waiting.message
+                for address in waiting.readers where !ownAddresses.contains(address) {
+                    if !(viewers[hash] ?? []).contains(.device(address: address)) {
+                        viewers[hash, default: []].append(.device(address: address))
+                    }
+                }
+            }
+        }
+        var openingHash: String?
+        if case let .working(message) = status.state, let linkID = status.activeLinkID,
+           let hash = ChannelStore.shared.channels.lazy.flatMap(\.links)
+               .first(where: { $0.id == linkID })?.stream?.hash.lowercased() {
+            openingHash = hash
+            connecting[hash] = message // More telling than the TV server's "Connecting…".
+            if !(viewers[hash] ?? []).contains(where: {
+                if case .thisMac(player: .some) = $0 { return true } else { return false }
+            }) {
+                viewers[hash, default: []].removeAll { $0 == .thisMac(player: nil) }
+                viewers[hash, default: []].append(.thisMac(player: AppConfig.playerBundle?.name))
+            }
+        }
+
         let channels = ChannelStore.shared.channels
         let streams = viewers.map { hash, viewers -> ActiveStream in
             let match = channels.lazy.compactMap { channel in
@@ -936,7 +981,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 channelID: match?.0.id,
                 channelName: match?.0.name,
                 channelIcon: match?.0.icon,
-                viewers: viewers
+                viewers: viewers,
+                connecting: connecting[hash],
+                openingOnMac: hash == openingHash
             )
         }
         NowPlaying.shared.set(streams.sorted {

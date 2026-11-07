@@ -60,11 +60,14 @@ final class ChannelStore: ObservableObject {
     }
 
     static var iconsDir: URL { baseDir.appendingPathComponent("icons") }
-    private static var fileURL: URL { baseDir.appendingPathComponent("channels.json") }
+    private static var defaultFileURL: URL { baseDir.appendingPathComponent("channels.json") }
 
+    /// Where the channels are saved; nil keeps them in memory only (the remote list).
+    private let fileURL: URL?
     private var loading = false
 
-    init() {
+    init(fileURL: URL? = ChannelStore.defaultFileURL) {
+        self.fileURL = fileURL
         load()
     }
 
@@ -239,7 +242,7 @@ final class ChannelStore: ObservableObject {
     private func load() {
         loading = true
         defer { loading = false }
-        guard let data = try? Data(contentsOf: Self.fileURL) else { return }
+        guard let fileURL = fileURL, let data = try? Data(contentsOf: fileURL) else { return }
         do {
             channels = try JSONDecoder().decode([Channel].self, from: data)
         } catch {
@@ -249,13 +252,14 @@ final class ChannelStore: ObservableObject {
 
     private func save() {
         if loading { return }
+        guard let fileURL = fileURL else { return }
         do {
             try FileManager.default.createDirectory(
                 at: Self.baseDir, withIntermediateDirectories: true
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(channels).write(to: Self.fileURL, options: .atomic)
+            try encoder.encode(channels).write(to: fileURL, options: .atomic)
         } catch {
             os_log("Cannot save channels.json: %{public}@", error.localizedDescription)
         }

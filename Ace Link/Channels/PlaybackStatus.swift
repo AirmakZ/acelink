@@ -11,9 +11,15 @@ final class PlaybackStatus: ObservableObject {
         case failed(String)
     }
 
-    @Published var state: State = .idle
+    @Published var state: State = .idle {
+        didSet { onChange?() }
+    }
     /// The link that is loading, so the list can show a spinner on it.
-    @Published var activeLinkID: UUID?
+    @Published var activeLinkID: UUID? {
+        didSet { onChange?() }
+    }
+    /// Called on the main thread after `state` or `activeLinkID` changes.
+    var onChange: (() -> Void)?
     /// Links playing on the Mac right now (more than one with "Play Alongside").
     @Published var playingLinkIDs: Set<UUID> = []
     /// What the status bar shows when nothing else is going on.
@@ -148,6 +154,11 @@ struct ActiveStream: Identifiable, Equatable {
     let channelName: String?
     let channelIcon: ChannelIcon?
     let viewers: [Viewer]
+    /// What's happening while it connects ("Waiting for peers…", "Connecting… 8 s"); nil
+    /// once it plays.
+    var connecting: String? = nil
+    /// Being opened on this Mac right now, so the opening can be cancelled.
+    var openingOnMac = false
 
     var id: String { hash }
 

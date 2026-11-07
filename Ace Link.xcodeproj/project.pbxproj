@@ -3,10 +3,13 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 50;
+	objectVersion = 54;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		08C8C1F674D982F98DED276C /* ChannelStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81E335DFC6794A433BE1C416 /* ChannelStore.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* RemoteList.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* RemoteList.swift */; };
+		32C0103F5667E6198C404080 /* ChannelsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */; };
 		4D045DCD26D669C900D4D816 /* Makefile in Resources */ = {isa = PBXBuildFile; fileRef = 4D045DCC26D669C900D4D816 /* Makefile */; };
 		4D0CFED024278D0900264B83 /* UpdateMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D0CFECF24278D0900264B83 /* UpdateMenu.swift */; };
 		4D0CFED224278D8400264B83 /* InstallDockerMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D0CFED124278D8400264B83 /* InstallDockerMenu.swift */; };
@@ -22,6 +25,11 @@
 		4DCF492926BFF70000A54904 /* HistoryMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DCF492826BFF70000A54904 /* HistoryMenu.swift */; };
 		4DE97F2E26A45F6B00432554 /* player.html in Resources */ = {isa = PBXBuildFile; fileRef = 4DE97F2D26A45F6B00432554 /* player.html */; };
 		4DE97F3026A4652900432554 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 4DE97F2F26A4652900432554 /* README.md */; };
+		574AEBB4A19776D2E8A44943 /* LinkEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E34AB54268EDF65AD2F4FB37 /* LinkEditor.swift */; };
+		6D8790145A77518D2760CFB5 /* TVSharePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */; };
+		8013427A04D2059C577EF22C /* TVShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD6B1198B376557547750934 /* TVShare.swift */; };
+		9D469EEE812D4E824D8978EA /* ChannelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59ECC785630B71AFCC2B8C36 /* ChannelsView.swift */; };
+		9EA0DD7D1261E0CE76E55FE1 /* BulkLinkEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */; };
 		AD5A8022FAB8D399F2C0D627 /* URLSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A88734E6F5BA877F00D41 /* URLSession.swift */; };
 		AD5A80E628235858EAB10D6C /* PlaylistServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A8985772955383DE6F9FD /* PlaylistServer.swift */; };
 		AD5A816994F7B6FAEF5AC7F0 /* FileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A87A890E9387B4F78C835 /* FileManager.swift */; };
@@ -49,20 +57,15 @@
 		AD5A8E1D59A9E6B19EAFB5DD /* URL.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A8D3A06CEA6D53BEAF667 /* URL.swift */; };
 		AD5A8E98E744D7649436ECEE /* NSWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A86082656212940CC7820 /* NSWorkspace.swift */; };
 		AD5A8FA5870DBB004FDB0279 /* Bundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A8CEF5E264FB7E7B48639 /* Bundle.swift */; };
-		08C8C1F674D982F98DED276C /* ChannelStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81E335DFC6794A433BE1C416 /* ChannelStore.swift */; };
 		AF77C839F219E84092D64545 /* PlaybackStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15535C235F13F4528AD3731E /* PlaybackStatus.swift */; };
-		F080288CFB23B0B8425C606D /* ChannelIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 047F0E3282CF9B9123EB3A5D /* ChannelIconView.swift */; };
-		9D469EEE812D4E824D8978EA /* ChannelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59ECC785630B71AFCC2B8C36 /* ChannelsView.swift */; };
-		EC9FAAA6C1B4467EE3CF0982 /* ChannelEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E68B4B7A76D1228A793AF73 /* ChannelEditor.swift */; };
-		574AEBB4A19776D2E8A44943 /* LinkEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E34AB54268EDF65AD2F4FB37 /* LinkEditor.swift */; };
-		32C0103F5667E6198C404080 /* ChannelsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */; };
-		9EA0DD7D1261E0CE76E55FE1 /* BulkLinkEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */; };
 		B4FDA7FD80CCE580EF66B85F /* LinkChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 821D95F03B599E39F091CC9E /* LinkChecker.swift */; };
-		8013427A04D2059C577EF22C /* TVShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD6B1198B376557547750934 /* TVShare.swift */; };
-		6D8790145A77518D2760CFB5 /* TVSharePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */; };
+		EC9FAAA6C1B4467EE3CF0982 /* ChannelEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E68B4B7A76D1228A793AF73 /* ChannelEditor.swift */; };
+		F080288CFB23B0B8425C606D /* ChannelIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 047F0E3282CF9B9123EB3A5D /* ChannelIconView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		047F0E3282CF9B9123EB3A5D /* ChannelIconView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelIconView.swift; sourceTree = "<group>"; };
+		15535C235F13F4528AD3731E /* PlaybackStatus.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PlaybackStatus.swift; sourceTree = "<group>"; };
 		4D045DCC26D669C900D4D816 /* Makefile */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = Makefile; sourceTree = SOURCE_ROOT; };
 		4D0CFECF24278D0900264B83 /* UpdateMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateMenu.swift; sourceTree = "<group>"; };
 		4D0CFED124278D8400264B83 /* InstallDockerMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallDockerMenu.swift; sourceTree = "<group>"; };
@@ -81,6 +84,13 @@
 		4DCF492826BFF70000A54904 /* HistoryMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryMenu.swift; sourceTree = "<group>"; };
 		4DE97F2D26A45F6B00432554 /* player.html */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.html; path = player.html; sourceTree = SOURCE_ROOT; };
 		4DE97F2F26A4652900432554 /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = SOURCE_ROOT; };
+		5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TVSharePanel.swift; sourceTree = "<group>"; };
+		59ECC785630B71AFCC2B8C36 /* ChannelsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelsView.swift; sourceTree = "<group>"; };
+		81E335DFC6794A433BE1C416 /* ChannelStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelStore.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5D /* RemoteList.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RemoteList.swift; sourceTree = "<group>"; };
+		821D95F03B599E39F091CC9E /* LinkChecker.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LinkChecker.swift; sourceTree = "<group>"; };
+		89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelsWindowController.swift; sourceTree = "<group>"; };
+		9E68B4B7A76D1228A793AF73 /* ChannelEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelEditor.swift; sourceTree = "<group>"; };
 		AD5A800E3EAF8AB65F34487F /* Pipe.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Pipe.swift; sourceTree = "<group>"; };
 		AD5A80670EFB8FEC13A07959 /* StreamPeers.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StreamPeers.swift; sourceTree = "<group>"; };
 		AD5A806B5F7355F010954D07 /* AppError.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppError.swift; sourceTree = "<group>"; };
@@ -108,17 +118,9 @@
 		AD5A8F6F082636C5D21A3C6E /* NSAlert.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NSAlert.swift; sourceTree = "<group>"; };
 		AD5A8F85E66D4A2038E37C4C /* DockerEngine.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DockerEngine.swift; sourceTree = "<group>"; };
 		AD5A8FCB503ABA8B866D285D /* acelink.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = acelink.png; sourceTree = SOURCE_ROOT; };
-		81E335DFC6794A433BE1C416 /* ChannelStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelStore.swift; sourceTree = "<group>"; };
-		15535C235F13F4528AD3731E /* PlaybackStatus.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PlaybackStatus.swift; sourceTree = "<group>"; };
-		047F0E3282CF9B9123EB3A5D /* ChannelIconView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelIconView.swift; sourceTree = "<group>"; };
-		59ECC785630B71AFCC2B8C36 /* ChannelsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelsView.swift; sourceTree = "<group>"; };
-		9E68B4B7A76D1228A793AF73 /* ChannelEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelEditor.swift; sourceTree = "<group>"; };
-		E34AB54268EDF65AD2F4FB37 /* LinkEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LinkEditor.swift; sourceTree = "<group>"; };
-		89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelsWindowController.swift; sourceTree = "<group>"; };
 		CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BulkLinkEditor.swift; sourceTree = "<group>"; };
-		821D95F03B599E39F091CC9E /* LinkChecker.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LinkChecker.swift; sourceTree = "<group>"; };
 		DD6B1198B376557547750934 /* TVShare.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TVShare.swift; sourceTree = "<group>"; };
-		5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TVSharePanel.swift; sourceTree = "<group>"; };
+		E34AB54268EDF65AD2F4FB37 /* LinkEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LinkEditor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -193,6 +195,25 @@
 			path = "Ace Link";
 			sourceTree = "<group>";
 		};
+		5A0953F028F6E448B8115DE9 /* Channels */ = {
+			isa = PBXGroup;
+			children = (
+				81E335DFC6794A433BE1C416 /* ChannelStore.swift */,
+				A1B2C3D4E5F60718293A4B5D /* RemoteList.swift */,
+				15535C235F13F4528AD3731E /* PlaybackStatus.swift */,
+				047F0E3282CF9B9123EB3A5D /* ChannelIconView.swift */,
+				59ECC785630B71AFCC2B8C36 /* ChannelsView.swift */,
+				9E68B4B7A76D1228A793AF73 /* ChannelEditor.swift */,
+				E34AB54268EDF65AD2F4FB37 /* LinkEditor.swift */,
+				5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */,
+				DD6B1198B376557547750934 /* TVShare.swift */,
+				821D95F03B599E39F091CC9E /* LinkChecker.swift */,
+				CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */,
+				89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */,
+			);
+			path = Channels;
+			sourceTree = "<group>";
+		};
 		AD5A86E52FB93F09C4621CD0 /* Extensions */ = {
 			isa = PBXGroup;
 			children = (
@@ -224,24 +245,6 @@
 			path = Services;
 			sourceTree = "<group>";
 		};
-		5A0953F028F6E448B8115DE9 /* Channels */ = {
-			isa = PBXGroup;
-			children = (
-				81E335DFC6794A433BE1C416 /* ChannelStore.swift */,
-				15535C235F13F4528AD3731E /* PlaybackStatus.swift */,
-				047F0E3282CF9B9123EB3A5D /* ChannelIconView.swift */,
-				59ECC785630B71AFCC2B8C36 /* ChannelsView.swift */,
-				9E68B4B7A76D1228A793AF73 /* ChannelEditor.swift */,
-				E34AB54268EDF65AD2F4FB37 /* LinkEditor.swift */,
-				5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */,
-				DD6B1198B376557547750934 /* TVShare.swift */,
-				821D95F03B599E39F091CC9E /* LinkChecker.swift */,
-				CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */,
-				89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */,
-			);
-			path = Channels;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -268,8 +271,9 @@
 		4DB4E6632108FA7100C2F1F2 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
+				BuildIndependentTargetsInParallel = YES;
 				LastSwiftUpdateCheck = 0940;
-				LastUpgradeCheck = 1110;
+				LastUpgradeCheck = 2720;
 				ORGANIZATIONNAME = blaise.io;
 				TargetAttributes = {
 					4DB4E66A2108FA7200C2F1F2 = {
@@ -323,6 +327,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				08C8C1F674D982F98DED276C /* ChannelStore.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* RemoteList.swift in Sources */,
 				AF77C839F219E84092D64545 /* PlaybackStatus.swift in Sources */,
 				F080288CFB23B0B8425C606D /* ChannelIconView.swift in Sources */,
 				9D469EEE812D4E824D8978EA /* ChannelsView.swift in Sources */,
@@ -396,6 +401,7 @@
 				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
@@ -404,9 +410,11 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_IDENTITY = "-";
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -425,6 +433,7 @@
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -456,6 +465,7 @@
 				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
 				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
 				CLANG_WARN_STRICT_PROTOTYPES = YES;
 				CLANG_WARN_SUSPICIOUS_MOVE = YES;
@@ -464,9 +474,11 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_IDENTITY = "-";
 				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -478,6 +490,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 			};
@@ -491,12 +504,14 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = "Ace Link/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
 				MARKETING_VERSION = "";
 				PRODUCT_BUNDLE_IDENTIFIER = io.blaise.acelink;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -513,12 +528,14 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = "Ace Link/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
 				MARKETING_VERSION = "";
 				PRODUCT_BUNDLE_IDENTIFIER = io.blaise.acelink;
 				PRODUCT_NAME = "$(TARGET_NAME)";

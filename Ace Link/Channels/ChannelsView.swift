@@ -126,10 +126,14 @@ private struct OutsideClickMonitor: NSViewRepresentable {
 /// Lets links be dropped on a channel in the sidebar, highlighting it meanwhile.
 private struct LinkDropDelegate: DropDelegate {
     let channelID: UUID
+    /// False in the remote list, where links can't move between channels.
+    let isEnabled: Bool
     @Binding var targeted: UUID?
     let onDrop: (LinkDragPayload) -> Void
 
-    func validateDrop(info: DropInfo) -> Bool { info.hasItemsConforming(to: [.plainText]) }
+    func validateDrop(info: DropInfo) -> Bool {
+        isEnabled && info.hasItemsConforming(to: [.plainText])
+    }
     func dropEntered(info: DropInfo) { targeted = channelID }
     func dropExited(info: DropInfo) { if targeted == channelID { targeted = nil } }
     func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
@@ -147,6 +151,8 @@ struct PlaybackActions {
     var stopLink: (UUID) -> Void
     /// Stops a stream playing on the Mac by its hash, from the Now Playing bar.
     var stopStream: (String) -> Void
+    /// Cancels the stream being opened on the Mac.
+    var cancelOpening: () -> Void
     var playFromClipboard: () -> Void
     var stop: () -> Void
     var checkAvailability: (UUID) -> Void
@@ -169,14 +175,48 @@ final class ChannelsUIState: ObservableObject {
     @Published var dropTarget: UUID?
 }
 
+/// Local/Remote switch, shown in the title bar left of the sidebar button. It turns red, with
+/// a warning, when the remote list could not be updated (the saved copy is shown meanwhile).
+struct SourceSwitch: View {
+    @ObservedObject var remote = RemoteList.shared
+    @AppStorage("showRemoteList") private var showRemote = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Toggle("Remote list", isOn: $showRemote)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .tint(remote.failure == nil ? nil : .red)
+                .help(showRemote ? "Showing the remote list. Switch to your own channels."
+                    : "Showing your own channels. Switch to the remote list.")
+            if let message = remote.failure {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .help("Could not update the remote list: \(message). Showing the saved copy.")
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+}
+
 struct ChannelsView: View {
     @ObservedObject var store: ChannelStore
     @ObservedObject var status: PlaybackStatus
     @ObservedObject var checker = LinkChecker.shared
     @ObservedObject var tv = TVShare.shared
+    @ObservedObject var remote = RemoteList.shared
+    @ObservedObject var remoteStore = RemoteList.shared.store
     let actions: PlaybackActions
 
     @StateObject private var ui = ChannelsUIState()
+    /// Local: the channels you edit. Remote: a read-only list loaded from an m3u.
+    @AppStorage("showRemoteList") private var showRemote = false
+
+    private var current: ChannelStore { showRemote ? remoteStore : store }
+
+    private var remoteFailure: String? { remote.failure }
 
     var body: some View {
         NavigationSplitView {
@@ -184,10 +224,11 @@ struct ChannelsView: View {
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 320)
         } detail: {
             Group {
-                if let channel = store.channel(id: ui.selection) {
+                if let channel = current.channel(id: ui.selection) {
                     ChannelDetailView(
                         channel: channel,
-                        store: store,
+                        store: current,
+                        readOnly: showRemote,
                         status: status,
                         checker: checker,
                         actions: actions,
@@ -205,6 +246,7 @@ struct ChannelsView: View {
                     status: status,
                     onStopAll: actions.stop,
                     onStopStream: actions.stopStream,
+                    onCancelOpening: actions.cancelOpening,
                     onSelectChannel: { ui.selection = $0 }
                 )
             }
@@ -280,7 +322,11 @@ struct ChannelsView: View {
             Text("The channel and its \(channel.links.count) link(s) will be removed.")
         }
         .onAppear {
-            if ui.selection == nil { ui.selection = store.channels.first?.id }
+            if ui.selection == nil { ui.selection = current.channels.first?.id }
+        }
+        .onChange(of: showRemote) { _ in
+            ui.selection = current.channels.first?.id
+            if showRemote, remoteFailure != nil { remote.refresh() }
         }
         .frame(minWidth: 640, minHeight: 400)
     }
@@ -311,22 +357,47 @@ struct ChannelsView: View {
         }
     }
 
+    @ViewBuilder
     private var newChannelBar: some View {
-        HStack {
-            Button {
-                ui.editingChannel = Channel(name: "")
-            } label: {
-                Label("New Channel", systemImage: "plus")
+        if showRemote {
+            HStack(spacing: 6) {
+                switch remote.state {
+                case .loading:
+                    ProgressView().controlSize(.small)
+                    Text("Updating…")
+                case let .updated(date):
+                    Text("Updated \(date.formatted(date: .omitted, time: .shortened))")
+                case .failed:
+                    Text("Not updated").foregroundColor(.red)
+                case .idle:
+                    EmptyView()
+                }
+                Spacer()
+                Button(action: remote.refresh) { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless)
+                    .disabled(remote.state == .loading)
+                    .help("Update the remote list")
             }
-            .buttonStyle(.borderless)
-            Spacer()
+            .font(.callout)
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 10)
+        } else {
+            HStack {
+                Button {
+                    ui.editingChannel = Channel(name: "")
+                } label: {
+                    Label("New Channel", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
         }
-        .padding(.horizontal, 10)
     }
 
     private var channelList: some View {
         List(selection: $ui.selection) {
-            ForEach(store.channels) { channel in
+            ForEach(current.channels) { channel in
                 HStack(spacing: 10) {
                     ChannelIconView(icon: channel.icon, size: 26)
                     VStack(alignment: .leading, spacing: 1) {
@@ -352,29 +423,38 @@ struct ChannelsView: View {
                     of: [.plainText],
                     delegate: LinkDropDelegate(
                         channelID: channel.id,
+                        isEnabled: !showRemote,
                         targeted: Binding(get: { ui.dropTarget }, set: { ui.dropTarget = $0 })
                     ) { payload in
-                        store.move(linkIDs: payload.linkIDs, from: payload.channelID, to: channel.id)
+                        if !showRemote {
+                            store.move(linkIDs: payload.linkIDs, from: payload.channelID, to: channel.id)
+                        }
                     }
                 )
                 .contextMenu {
-                    Button("Edit Channel…") { ui.editingChannel = channel }
-                    Button("Add Link…") {
-                        ui.editingLink = LinkEditTarget(
-                            channelID: channel.id, link: LinkEditor.draftFromClipboard(), isNew: true
-                        )
+                    if !showRemote {
+                        Button("Edit Channel…") { ui.editingChannel = channel }
+                        Button("Add Link…") {
+                            ui.editingLink = LinkEditTarget(
+                                channelID: channel.id, link: LinkEditor.draftFromClipboard(), isNew: true
+                            )
+                        }
+                        Button("Add Links in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
                     }
-                    Button("Add Links in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
                     Button("Check Availability") { actions.checkAvailability(channel.id) }
                         .disabled(channel.links.isEmpty || checker.isRunning || status.isBusy)
-                    Divider()
-                    Button("Delete Channel…") { ui.channelPendingDelete = channel }
+                    if !showRemote {
+                        Divider()
+                        Button("Delete Channel…") { ui.channelPendingDelete = channel }
+                    }
                 }
             }
-            .onMove(perform: store.moveChannels)
+            .onMove(perform: showRemote ? nil : store.moveChannels)
         }
         .onDeleteCommand {
-            if let channel = store.channel(id: ui.selection) { ui.channelPendingDelete = channel }
+            if !showRemote, let channel = store.channel(id: ui.selection) {
+                ui.channelPendingDelete = channel
+            }
         }
     }
 
@@ -383,9 +463,14 @@ struct ChannelsView: View {
             Image(systemName: "tv")
                 .font(.system(size: 44))
                 .foregroundColor(.secondary)
-            Text(store.channels.isEmpty ? "No channels yet" : "Select a channel")
+            Text(current.channels.isEmpty ? "No channels yet" : "Select a channel")
                 .font(.title2)
-            if store.channels.isEmpty {
+            if showRemote {
+                if current.channels.isEmpty {
+                    Text("The remote list has not been downloaded yet.")
+                        .foregroundColor(.secondary)
+                }
+            } else if store.channels.isEmpty {
                 Text("Create a channel, then add one or more AceStream links to it.")
                     .foregroundColor(.secondary)
                 Button("New Channel") { ui.editingChannel = Channel(name: "") }
@@ -402,6 +487,8 @@ struct ChannelsView: View {
 struct ChannelDetailView: View {
     let channel: Channel
     @ObservedObject var store: ChannelStore
+    /// The remote list: links can be played and checked, not edited.
+    var readOnly = false
     @ObservedObject var status: PlaybackStatus
     @ObservedObject var checker: LinkChecker
     @ObservedObject var transfers = TransferMonitor.shared
@@ -420,6 +507,19 @@ struct ChannelDetailView: View {
     private func dragNames(for link: StreamLink) -> [String] {
         guard selection.contains(link.id) else { return [link.name] }
         return channel.links.filter { selection.contains($0.id) }.map(\.name)
+    }
+
+    /// Copies `link` (or the whole selection, when it's part of it) into a local channel,
+    /// skipping streams the channel already has.
+    private func copy(_ link: StreamLink, to channelID: UUID) {
+        let chosen = selection.contains(link.id)
+            ? channel.links.filter { selection.contains($0.id) } : [link]
+        let existing = Set(ChannelStore.shared.channel(id: channelID)?.links
+            .compactMap { $0.stream?.hash.lowercased() } ?? [])
+        let copies = chosen
+            .filter { $0.stream.map { !existing.contains($0.hash.lowercased()) } ?? false }
+            .map { StreamLink(name: $0.name, url: $0.url) }
+        if !copies.isEmpty { ChannelStore.shared.add(links: copies, to: channelID) }
     }
 
     /// Click selects, ⌘-click adds or removes, ⇧-click selects the range from the anchor.
@@ -446,11 +546,13 @@ struct ChannelDetailView: View {
             if channel.links.isEmpty {
                 VStack(spacing: 10) {
                     Text("No links in this channel").font(.title3)
-                    Text("Add an AceStream link (hash, acestream:// or magnet:).")
-                        .foregroundColor(.secondary)
-                    HStack {
-                        Button("Add Link", action: addLink)
-                        Button("Add in Bulk…", action: onBulkAdd)
+                    if !readOnly {
+                        Text("Add an AceStream link (hash, acestream:// or magnet:).")
+                            .foregroundColor(.secondary)
+                        HStack {
+                            Button("Add Link", action: addLink)
+                            Button("Add in Bulk…", action: onBulkAdd)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -466,6 +568,7 @@ struct ChannelDetailView: View {
                             availability: checker.results[link.id],
                             rate: link.stream.flatMap { transfers.rates[$0.hash.lowercased()] },
                             viewers: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.viewers ?? [],
+                            connecting: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.connecting,
                             onStop: { actions.stopLink(link.id) },
                             onPlay: {
                                 if NSEvent.modifierFlags.contains(.option) {
@@ -514,18 +617,30 @@ struct ChannelDetailView: View {
                             Button("Check Availability") { actions.checkLink(channel.id, link.id) }
                                 .disabled(link.stream == nil || checker.isRunning || status.isBusy)
                             Divider()
-                            Button("Edit Link…") {
-                                onEditLink(
-                                    LinkEditTarget(channelID: channel.id, link: link, isNew: false)
-                                )
+                            if !readOnly {
+                                Button("Edit Link…") {
+                                    onEditLink(
+                                        LinkEditTarget(channelID: channel.id, link: link, isNew: false)
+                                    )
+                                }
                             }
                             Button("Copy Link") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(link.url, forType: .string)
                             }
-                            Divider()
-                            Button("Delete Link") {
-                                store.delete(linkID: link.id, in: channel.id)
+                            if readOnly {
+                                Menu("Copy to Local") {
+                                    ForEach(ChannelStore.shared.channels) { local in
+                                        Button(local.name) { copy(link, to: local.id) }
+                                    }
+                                }
+                                .disabled(ChannelStore.shared.channels.isEmpty)
+                            }
+                            if !readOnly {
+                                Divider()
+                                Button("Delete Link") {
+                                    store.delete(linkID: link.id, in: channel.id)
+                                }
                             }
                         }
                     }
@@ -533,17 +648,19 @@ struct ChannelDetailView: View {
                     // channel, so it works for several selected links at once.
                     .onInsert(of: [.plainText]) { index, providers in
                         _ = LinkDragPayload.load(from: providers) { payload in
+                            // The remote list only allows ordering within a channel.
+                            if readOnly, payload.channelID != channel.id { return }
                             store.move(
                                 linkIDs: payload.linkIDs, from: payload.channelID,
                                 to: channel.id, at: index
                             )
                         }
                     }
-                    .onDelete { offsets in
+                    .onDelete(perform: readOnly ? nil : { offsets in
                         for index in offsets {
                             store.delete(linkID: channel.links[index].id, in: channel.id)
                         }
-                    }
+                    })
                 }
                 .listStyle(.inset)
                 .background(OutsideClickMonitor { selection = [] })
@@ -562,13 +679,15 @@ struct ChannelDetailView: View {
             }
             Spacer()
             checkButton
-            Button("Edit", action: onEditChannel)
-            Button("Add in Bulk…", action: onBulkAdd)
-                .keyboardShortcut("l", modifiers: [.command, .shift])
-            Button(action: addLink) {
-                Label("Add Link", systemImage: "plus")
+            if !readOnly {
+                Button("Edit", action: onEditChannel)
+                Button("Add in Bulk…", action: onBulkAdd)
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                Button(action: addLink) {
+                    Label("Add Link", systemImage: "plus")
+                }
+                .keyboardShortcut("l")
             }
-            .keyboardShortcut("l")
         }
         .padding(16)
     }
@@ -676,6 +795,8 @@ struct LinkRow: View {
     let rate: TransferRate?
     /// Who watches it right now (this Mac, other devices).
     let viewers: [Viewer]
+    /// What's going on while it connects; nil once it plays.
+    let connecting: String?
     let onStop: () -> Void
     let onPlay: () -> Void
 
@@ -727,7 +848,11 @@ struct LinkRow: View {
             if !viewers.isEmpty || rate != nil {
                 HStack(spacing: 12) {
                     ViewersLabel(viewers: viewers)
-                    if let rate = rate { TransferRateLabel(rate: rate) }
+                    if let connecting = connecting {
+                        Text(connecting).font(.caption).foregroundColor(.secondary).lineLimit(1)
+                    } else if let rate = rate {
+                        TransferRateLabel(rate: rate)
+                    }
                 }
             } else {
                 lastSeenLabel
@@ -799,6 +924,7 @@ struct StatusBar: View {
     @ObservedObject var transfers = TransferMonitor.shared
     let onStopAll: () -> Void
     let onStopStream: (String) -> Void
+    let onCancelOpening: () -> Void
     let onSelectChannel: (UUID) -> Void
 
     @AppStorage("nowPlayingExpanded") private var expanded = false
@@ -807,6 +933,8 @@ struct StatusBar: View {
 
     private var message: (icon: AnyView, text: String, isError: Bool)? {
         switch status.state {
+        case .working where streams.contains(where: \.openingOnMac):
+            return nil // Shown on that stream's line.
         case let .working(text):
             return (AnyView(ProgressView().controlSize(.small)), text, false)
         case let .failed(text):
@@ -823,7 +951,8 @@ struct StatusBar: View {
                 if expanded, streams.count > 1 {
                     NowPlayingPanel(
                         streams: streams, rates: transfers.rates,
-                        onStop: onStopStream, onStopAll: onStopAll, onSelect: onSelectChannel
+                        onStop: onStopStream, onCancelOpening: onCancelOpening,
+                        onStopAll: onStopAll, onSelect: onSelectChannel
                     )
                     .padding(.horizontal, 10)
                     .padding(.bottom, 8)
@@ -862,25 +991,22 @@ struct StatusBar: View {
     @ViewBuilder
     private var summary: some View {
         HStack(spacing: 8) {
-            Image(systemName: "play.fill").foregroundColor(.green)
             if streams.count == 1, let stream = streams.first {
+                StreamStateIcon(connecting: stream.connecting != nil)
                 Text(stream.name).fontWeight(.semibold).lineLimit(1)
                 ViewersLabel(viewers: stream.viewers)
-                if let rate = transfers.rates[stream.hash] { TransferRateLabel(rate: rate) }
+                StreamProgressLabel(stream: stream, rate: transfers.rates[stream.hash])
                 Spacer(minLength: 8)
-                Button { onStopStream(stream.hash) } label: {
-                    Image(systemName: "stop.circle.fill").font(.system(size: 16))
-                }
-                .buttonStyle(.borderless)
-                .disabled(!stream.playsOnMac)
-                .help(stream.playsOnMac ? "Stop playing on this Mac"
-                    : "Playing on another device; stop it there")
+                StreamStopButton(stream: stream, onStop: onStopStream, onCancelOpening: onCancelOpening)
             } else {
+                StreamStateIcon(connecting: streams.contains { $0.connecting != nil })
                 Text("\(streams.count) streams:").fontWeight(.semibold)
                 Text(streams.map(\.name).joined(separator: " + "))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                if !totalDown.isEmpty {
+                if let opening = streams.first(where: { $0.connecting != nil }) {
+                    Text("· \(opening.name) connecting…").foregroundColor(.secondary).lineLimit(1)
+                } else if !totalDown.isEmpty {
                     Text(totalDown).foregroundColor(.secondary).monospacedDigit()
                 }
                 Spacer(minLength: 8)
@@ -891,6 +1017,12 @@ struct StatusBar: View {
                 }
                 .help(expanded ? "Hide the list of streams" : "Show every stream playing")
             }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            // With several streams, a click anywhere on the line opens the list.
+            guard streams.count > 1 else { return }
+            withAnimation(.snappy) { expanded.toggle() }
         }
     }
 
@@ -907,6 +1039,7 @@ struct NowPlayingPanel: View {
     let streams: [ActiveStream]
     let rates: [String: TransferRate]
     let onStop: (String) -> Void
+    let onCancelOpening: () -> Void
     let onStopAll: () -> Void
     let onSelect: (UUID) -> Void
 
@@ -955,19 +1088,61 @@ struct NowPlayingPanel: View {
             .frame(minWidth: 140, alignment: .leading)
             ViewersLabel(viewers: stream.viewers)
             Spacer(minLength: 8)
-            if let rate = rates[stream.hash] { TransferRateLabel(rate: rate) }
-            Button { onStop(stream.hash) } label: {
-                Image(systemName: "stop.circle.fill").font(.system(size: 16))
-            }
-            .buttonStyle(.borderless)
-            .disabled(!stream.playsOnMac)
-            .help(stream.playsOnMac ? "Stop playing on this Mac"
-                : "Playing on another device; stop it there")
+            StreamProgressLabel(stream: stream, rate: rates[stream.hash])
+            StreamStopButton(stream: stream, onStop: onStop, onCancelOpening: onCancelOpening)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
         .onTapGesture { stream.channelID.map(onSelect) }
+    }
+}
+
+/// A spinner while a stream connects, the play symbol once it plays.
+struct StreamStateIcon: View {
+    let connecting: Bool
+
+    var body: some View {
+        if connecting {
+            ProgressView().controlSize(.small)
+        } else {
+            Image(systemName: "play.fill").foregroundColor(.green)
+        }
+    }
+}
+
+/// While a stream connects, what's going on ("Waiting for peers…"); then its live rates.
+struct StreamProgressLabel: View {
+    let stream: ActiveStream
+    let rate: TransferRate?
+
+    var body: some View {
+        if let connecting = stream.connecting {
+            Text(connecting).font(.caption).foregroundColor(.secondary).lineLimit(1)
+        } else if let rate = rate {
+            TransferRateLabel(rate: rate)
+        }
+    }
+}
+
+/// Stops a stream playing on the Mac, or cancels one being opened. Disabled for streams
+/// only another device plays: those can only be stopped there.
+struct StreamStopButton: View {
+    let stream: ActiveStream
+    let onStop: (String) -> Void
+    let onCancelOpening: () -> Void
+
+    var body: some View {
+        Button {
+            if stream.openingOnMac { onCancelOpening() } else { onStop(stream.hash) }
+        } label: {
+            Image(systemName: "stop.circle.fill").font(.system(size: 16))
+        }
+        .buttonStyle(.borderless)
+        .disabled(!stream.openingOnMac && !stream.playsOnMac)
+        .help(stream.openingOnMac ? "Cancel opening it"
+            : stream.playsOnMac ? "Stop playing on this Mac"
+            : "Playing on another device; stop it there")
     }
 }
 

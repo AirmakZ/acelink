@@ -18,6 +18,13 @@ final class ChannelsWindowController: NSWindowController, NSWindowDelegate {
         window.contentViewController = NSHostingController(rootView: view)
         window.setContentSize(NSSize(width: 820, height: 540))
         window.center()
+        // In the title bar, left of the toolbar and its sidebar button.
+        let switchView = NSHostingView(rootView: SourceSwitch())
+        switchView.frame.size = switchView.fittingSize
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = switchView
+        accessory.layoutAttribute = .left
+        window.addTitlebarAccessoryViewController(accessory)
         window.setFrameAutosaveName("ChannelsWindow")
         window.isReleasedWhenClosed = false
         self.init(window: window)

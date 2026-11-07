@@ -199,6 +199,8 @@ final class TVShare: ObservableObject {
 
     private final class WarmUp {
         let created = Date()
+        /// The engine manifest request (id/infohash + pid), to start the session again.
+        let manifest: URLComponents
         var readyPath: String?
         var failed = false
         /// The session's stats, for the transfer rates shown in the list.
@@ -218,7 +220,38 @@ final class TVShare: ObservableObject {
             readers[client] = now
             if client != "127.0.0.1" { lastTVRead = now }
         }
+
+        // Stall detection and restarts (see `relayPlaylist` and `restart`).
+        /// Last time the engine's playlist gained a segment.
+        var lastProgress = Date()
+        /// Media sequence + last segment of the engine playlist last seen, to spot progress.
+        var lastSignature: String?
+        /// A new session is being started under the hood; players get `cachedPlaylist`.
+        var restarting = false
+        var restarts = 0
+        var restartTimes: [Date] = []
+        /// The playlist last sent to players, served again while restarting.
+        var cachedPlaylist: Data?
+        /// Added to the engine's media sequence, so numbering keeps growing across restarts.
+        var sequenceOffset = 0
+        /// Media sequence of the last segment sent to players.
+        var lastOutputSequence = -1
+        /// The next playlist is the first of a restarted session.
+        var awaitingRestartedPlaylist = false
+        /// Engine media sequence of a restarted session's first segment, which gets a
+        /// discontinuity tag while it's in the playlist.
+        var discontinuityAt: Int?
+
+        init(manifest: URLComponents) {
+            self.manifest = manifest
+        }
     }
+
+    /// A stream being read whose playlist gains no segment for this long is stuck.
+    private static let stallSeconds: TimeInterval = 30
+    /// Restarts allowed within `restartWindow` before giving up on a stream.
+    private static let maxRestarts = 3
+    private static let restartWindow: TimeInterval = 5 * 60
 
     /// A session nobody has read for this long is ended. The engine doesn't do it itself:
     /// it keeps downloading and segmenting a stream nobody watches.
@@ -313,9 +346,15 @@ final class TVShare: ObservableObject {
         warmUp.markRead(by: client)
 
         if tail == "index.m3u8" {
+            if warmUp.restarting, let cached = warmUp.cachedPlaylist {
+                // A new session is starting; players wait on the last playlist meanwhile.
+                return send(Self.http(200, type: "application/vnd.apple.mpegurl", body: cached))
+            }
             relay(playlistURL, hash: hash, send: send) { body in
-                Data(Self.rewrite(playlist: String(decoding: body, as: UTF8.self),
-                                  from: playlistURL, hash: hash).utf8)
+                self.queue.sync {
+                    self.relayPlaylist(String(decoding: body, as: UTF8.self),
+                                       from: playlistURL, warmUp: warmUp, hash: hash)
+                }
             }
         } else if tail.hasPrefix("seg/ace/"),
                   let segmentURL = URL(string: AppConstants.Docker.baseURL.absoluteString
@@ -334,12 +373,110 @@ final class TVShare: ObservableObject {
         engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 502
             guard status == 200, let data = data else {
-                if status == 404 { self.forgetSession(hash: hash) } // The engine dropped it.
+                if status == 404 { self.sessionGone(hash: hash) } // The engine dropped it.
                 return send(Self.http(status == 404 ? 404 : 502, type: "text/plain",
                                       body: Data("Stream unavailable".utf8)))
             }
             send(Self.http(200, type: type, body: transform?(data) ?? data))
         }.resume()
+    }
+
+    /// Rewrites an engine playlist for players: segments point at the relay, numbering
+    /// continues across restarts, and a restarted session's first segment is marked as a
+    /// discontinuity (a new source). Also tracks progress for stall detection. On `queue`.
+    private func relayPlaylist(
+        _ playlist: String, from playlistURL: URL, warmUp: WarmUp, hash: String
+    ) -> Data {
+        let lines = Self.rewrite(playlist: playlist, from: playlistURL, hash: hash)
+            .components(separatedBy: "\n")
+        let engineSequence = lines.lazy.compactMap { line -> Int? in
+            guard line.hasPrefix("#EXT-X-MEDIA-SEQUENCE:") else { return nil }
+            return Int(line.dropFirst("#EXT-X-MEDIA-SEQUENCE:".count).trimmingCharacters(in: .whitespaces))
+        }.first ?? 0
+        let segments = lines.filter { !$0.isEmpty && !$0.hasPrefix("#") }
+
+        if warmUp.awaitingRestartedPlaylist {
+            // Carry on right after the last segment players got.
+            warmUp.awaitingRestartedPlaylist = false
+            warmUp.sequenceOffset = warmUp.lastOutputSequence + 1 - engineSequence
+            warmUp.discontinuityAt = engineSequence
+        }
+        let signature = "\(engineSequence)|\(segments.last ?? "")"
+        if signature != warmUp.lastSignature {
+            warmUp.lastSignature = signature
+            warmUp.lastProgress = Date()
+        }
+        if !segments.isEmpty {
+            warmUp.lastOutputSequence = warmUp.sequenceOffset + engineSequence + segments.count - 1
+        }
+
+        // The discontinuity stays tagged while its segment is in the window; once it slides
+        // out, the discontinuity sequence counts it.
+        let lastSequence = engineSequence + segments.count - 1
+        let tagged = warmUp.discontinuityAt.map { $0 >= engineSequence && $0 <= lastSequence } ?? false
+        var output: [String] = []
+        var sequence = engineSequence
+        var wroteHeader = false
+        for line in lines {
+            if line.hasPrefix("#EXT-X-MEDIA-SEQUENCE:") || line.hasPrefix("#EXT-X-DISCONTINUITY-SEQUENCE:") {
+                continue // Written below, renumbered.
+            }
+            if !wroteHeader, line.hasPrefix("#EXTINF") || (!line.isEmpty && !line.hasPrefix("#")) {
+                output.append("#EXT-X-MEDIA-SEQUENCE:\(warmUp.sequenceOffset + engineSequence)")
+                if warmUp.restarts > 0 {
+                    output.append("#EXT-X-DISCONTINUITY-SEQUENCE:\(warmUp.restarts - (tagged ? 1 : 0))")
+                }
+                wroteHeader = true
+            }
+            if line.hasPrefix("#EXTINF"), tagged, sequence == warmUp.discontinuityAt {
+                output.append("#EXT-X-DISCONTINUITY")
+            }
+            output.append(line)
+            if !line.isEmpty, !line.hasPrefix("#") { sequence += 1 }
+        }
+        let data = Data(output.joined(separator: "\n").utf8)
+        warmUp.cachedPlaylist = data
+        return data
+    }
+
+    /// Starts a stuck stream's session again under the hood: players keep the same playlist
+    /// URL and get the new session's segments after a discontinuity. Gives up (ends the
+    /// session) after `maxRestarts` within `restartWindow`. Only call on `queue`.
+    private func restart(_ warmUp: WarmUp, hash: String, reason: String) {
+        let now = Date()
+        warmUp.restartTimes = warmUp.restartTimes.filter { now.timeIntervalSince($0) < Self.restartWindow }
+        guard warmUp.restartTimes.count < Self.maxRestarts else {
+            os_log("Stream %{public}@ keeps getting stuck; ending its session.", String(hash.prefix(7)))
+            return end(warmUp, hash: hash)
+        }
+        warmUp.restartTimes.append(now)
+        warmUp.restarts += 1
+        warmUp.restarting = true
+        os_log("Stream %{public}@ is stuck (%{public}@); restarting its session (%d/%d).",
+               String(hash.prefix(7)), reason, warmUp.restartTimes.count, Self.maxRestarts)
+        let command = warmUp.commandURL
+        warmUp.statURL = nil
+        warmUp.commandURL = nil
+        // End the old session first: under the same player id, asking again would only
+        // return it.
+        guard let command = command else { return startSession(for: warmUp, hash: hash) }
+        engineSession.dataTask(with: command.appendingQuery("method", "stop")) { _, _, _ in
+            self.queue.async { self.startSession(for: warmUp, hash: hash) }
+        }.resume()
+    }
+
+    /// The engine no longer knows a stream's session. If someone is watching, start it again;
+    /// otherwise forget it.
+    private func sessionGone(hash: String) {
+        queue.async {
+            guard let warmUp = self.warmUps[hash], !warmUp.restarting else { return }
+            if Date().timeIntervalSince(warmUp.lastRead ?? warmUp.created) < Self.idleSeconds,
+               warmUp.readyPath != nil {
+                self.restart(warmUp, hash: hash, reason: "the engine ended its session")
+            } else {
+                self.warmUps[hash] = nil
+            }
+        }
     }
 
     /// Points every segment of an engine playlist at the relay.
@@ -361,11 +498,13 @@ final class TVShare: ObservableObject {
                 warmUps[hash] = nil
                 continue
             }
-            guard warmUp.readyPath != nil,
-                  now.timeIntervalSince(warmUp.lastRead ?? warmUp.created) > Self.idleSeconds
-            else { continue }
-            os_log("Nobody watches %{public}@ any more; ending its session.", String(hash.prefix(7)))
-            end(warmUp, hash: hash)
+            guard warmUp.readyPath != nil, !warmUp.restarting else { continue }
+            if now.timeIntervalSince(warmUp.lastRead ?? warmUp.created) > Self.idleSeconds {
+                os_log("Nobody watches %{public}@ any more; ending its session.", String(hash.prefix(7)))
+                end(warmUp, hash: hash)
+            } else if now.timeIntervalSince(warmUp.lastProgress) > Self.stallSeconds {
+                restart(warmUp, hash: hash, reason: "no new video for \(Int(Self.stallSeconds)) s")
+            }
         }
     }
 
@@ -392,11 +531,20 @@ final class TVShare: ObservableObject {
 
     /// Starts (or reuses) loading a stream in the engine for the TV.
     private func warmUp(param: String, hash: String, fresh: Bool) -> WarmUp {
-        if let existing = warmUps[hash],
-           !(fresh && (existing.failed || Date().timeIntervalSince(existing.created) > 30)) {
+        // A ready stream is kept as is: players reading it rely on its numbering. One that
+        // got stuck is restarted by the sweep, and only a failed one is tried again.
+        if let existing = warmUps[hash], !(fresh && existing.failed) {
             return existing
         }
-        let warmUp = WarmUp()
+        var manifest = URLComponents(
+            url: AppConstants.Docker.baseURL.appendingPathComponent("/ace/manifest.m3u8"),
+            resolvingAgainstBaseURL: false
+        )!
+        manifest.queryItems = [
+            URLQueryItem(name: param, value: hash),
+            URLQueryItem(name: "pid", value: Self.sessionPlayerID(hash: hash))
+        ]
+        let warmUp = WarmUp(manifest: manifest)
         // Reads before the warm-up was renewed still count.
         warmUp.lastRead = warmUps[hash]?.lastRead
         warmUp.lastTVRead = warmUps[hash]?.lastTVRead
@@ -409,16 +557,15 @@ final class TVShare: ObservableObject {
             LinkChecker.shared.throttle(to: LinkChecker.concurrencyWhilePlaying)
         }
 
-        var components = URLComponents(
-            url: AppConstants.Docker.baseURL.appendingPathComponent("/ace/manifest.m3u8"),
-            resolvingAgainstBaseURL: false
-        )!
-        components.queryItems = [
-            URLQueryItem(name: param, value: hash),
-            URLQueryItem(name: "pid", value: Self.sessionPlayerID(hash: hash))
-        ]
+        startSession(for: warmUp, hash: hash)
+        return warmUp
+    }
+
+    /// Asks the engine for the stream's session and waits until it has video. Only call on
+    /// `queue`. Used for the first start and for restarts.
+    private func startSession(for warmUp: WarmUp, hash: String) {
         let request = URLRequest(
-            url: components.url!,
+            url: warmUp.manifest.url!,
             timeoutInterval: Self.holdSeconds * Double(Self.maxHops + 1)
         )
         // URLSession follows the engine's redirect to the session playlist and only
@@ -429,15 +576,25 @@ final class TVShare: ObservableObject {
                 if let http = response as? HTTPURLResponse, http.statusCode == 200,
                    body.contains("#EXTINF"), let url = http.url {
                     warmUp.readyPath = url.path + (url.query.map { "?" + $0 } ?? "")
-                    os_log("TV stream %{public}@ ready", String(hash.prefix(7)))
-                    self.fetchStatURL(for: warmUp, manifest: components)
+                    warmUp.lastProgress = Date()
+                    warmUp.lastSignature = nil
+                    if warmUp.restarting {
+                        warmUp.restarting = false
+                        warmUp.awaitingRestartedPlaylist = true
+                        os_log("TV stream %{public}@ restarted", String(hash.prefix(7)))
+                    } else {
+                        os_log("TV stream %{public}@ ready", String(hash.prefix(7)))
+                    }
+                    self.fetchStatURL(for: warmUp, manifest: warmUp.manifest)
+                } else if warmUp.restarting {
+                    os_log("TV stream %{public}@ didn't come back; giving up.", String(hash.prefix(7)))
+                    self.end(warmUp, hash: hash)
                 } else {
                     warmUp.failed = true
                     os_log("TV stream %{public}@ failed", String(hash.prefix(7)))
                 }
             }
         }.resume()
-        return warmUp
     }
 
     /// Asks the engine for the session's stats URL. The JSON form of the manifest under the
@@ -469,7 +626,7 @@ final class TVShare: ObservableObject {
     /// Forgets a stream whose session the engine has ended, so it's no longer polled and
     /// the next request starts a fresh one.
     func forgetSession(hash: String) {
-        queue.async { self.warmUps[hash] = nil }
+        sessionGone(hash: hash)
     }
 
     /// Ends a stream's shared session right away when the Mac stops playing it, unless a

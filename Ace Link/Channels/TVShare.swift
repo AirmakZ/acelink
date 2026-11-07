@@ -350,7 +350,12 @@ final class TVShare: ObservableObject {
                 // A new session is starting; players wait on the last playlist meanwhile.
                 return send(Self.http(200, type: "application/vnd.apple.mpegurl", body: cached))
             }
-            relay(playlistURL, hash: hash, send: send) { body in
+            // Only the current session's playlist going missing means the stream is gone;
+            // after a restart, stragglers for the old one are expected.
+            let session = readyPath
+            relay(playlistURL, hash: hash, send: send, onMissing: {
+                self.sessionGone(hash: hash) { $0.readyPath == session }
+            }) { body in
                 self.queue.sync {
                     self.relayPlaylist(String(decoding: body, as: UTF8.self),
                                        from: playlistURL, warmUp: warmUp, hash: hash)
@@ -368,12 +373,13 @@ final class TVShare: ObservableObject {
     /// Fetches `url` from the engine and passes it on, after `transform` if given.
     private func relay(
         _ url: URL, hash: String, send: @escaping (Data) -> Void,
-        type: String = "application/vnd.apple.mpegurl", transform: ((Data) -> Data)? = nil
+        type: String = "application/vnd.apple.mpegurl", onMissing: (() -> Void)? = nil,
+        transform: ((Data) -> Data)? = nil
     ) {
         engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 502
             guard status == 200, let data = data else {
-                if status == 404 { self.sessionGone(hash: hash) } // The engine dropped it.
+                if status == 404 { onMissing?() } // The engine dropped it.
                 return send(Self.http(status == 404 ? 404 : 502, type: "text/plain",
                                       body: Data("Stream unavailable".utf8)))
             }
@@ -466,10 +472,12 @@ final class TVShare: ObservableObject {
     }
 
     /// The engine no longer knows a stream's session. If someone is watching, start it again;
-    /// otherwise forget it.
-    private func sessionGone(hash: String) {
+    /// otherwise forget it. `isCurrent` checks that the news is about the session in use,
+    /// not one already replaced by a restart.
+    private func sessionGone(hash: String, isCurrent: @escaping (WarmUp) -> Bool) {
         queue.async {
-            guard let warmUp = self.warmUps[hash], !warmUp.restarting else { return }
+            guard let warmUp = self.warmUps[hash], !warmUp.restarting, isCurrent(warmUp)
+            else { return }
             if Date().timeIntervalSince(warmUp.lastRead ?? warmUp.created) < Self.idleSeconds,
                warmUp.readyPath != nil {
                 self.restart(warmUp, hash: hash, reason: "the engine ended its session")
@@ -625,8 +633,8 @@ final class TVShare: ObservableObject {
 
     /// Forgets a stream whose session the engine has ended, so it's no longer polled and
     /// the next request starts a fresh one.
-    func forgetSession(hash: String) {
-        sessionGone(hash: hash)
+    func forgetSession(hash: String, statURL: URL) {
+        sessionGone(hash: hash) { $0.statURL == statURL }
     }
 
     /// Ends a stream's shared session right away when the Mac stops playing it, unless a

@@ -113,8 +113,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if let url = player.session?.statURL { sessions[player.hash.lowercased()] = url }
             }
             return sessions
-        }, onGone: { [weak self] hash in
-            self?.tv.forgetSession(hash: hash)
+        }, onGone: { [weak self] hash, statURL in
+            self?.tv.forgetSession(hash: hash, statURL: statURL)
         })
         NSApp.mainMenu = AppMainMenu.build(target: self)
 

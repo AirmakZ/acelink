@@ -70,11 +70,11 @@ final class TransferMonitor: ObservableObject {
     private var readings: [String: [Reading]] = [:]
     private var timer: Timer?
     private var sessions: () -> [String: URL] = { [:] }
-    private var onGone: (String) -> Void = { _ in }
+    private var onGone: (String, URL) -> Void = { _, _ in }
 
     /// Starts polling. `sessions` returns hash -> stats URL of what is playing now;
-    /// `onGone` is told about streams whose session the engine has ended.
-    func start(sessions: @escaping () -> [String: URL], onGone: @escaping (String) -> Void) {
+    /// `onGone` is told about streams whose session (stats URL) the engine has ended.
+    func start(sessions: @escaping () -> [String: URL], onGone: @escaping (String, URL) -> Void) {
         self.sessions = sessions
         self.onGone = onGone
         guard timer == nil else { return }
@@ -94,17 +94,17 @@ final class TransferMonitor: ObservableObject {
             URLSession.shared.dataTask(with: URLRequest(url: url, timeoutInterval: 3)) { data, _, _ in
                 let stats = data.flatMap { try? JSONDecoder().decode(SessionStats.self, from: $0) }?
                     .response
-                DispatchQueue.main.async { self.record(stats, hash: hash) }
+                DispatchQueue.main.async { self.record(stats, hash: hash, url: url) }
             }.resume()
         }
     }
 
-    private func record(_ stats: SessionStats.Stats?, hash: String) {
+    private func record(_ stats: SessionStats.Stats?, hash: String, url: URL) {
         guard let stats = stats, let downloaded = stats.downloaded else {
             // The session is gone (e.g. the TV left it): no rate to show.
             readings[hash] = nil
             rates[hash] = nil
-            onGone(hash)
+            onGone(hash, url)
             return
         }
         var list = readings[hash] ?? []

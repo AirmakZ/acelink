@@ -13,6 +13,8 @@ struct PlaybackActions {
     var playAlongside: (StreamLink) -> Void
     /// Stops one link playing on the Mac, leaving the others playing.
     var stopLink: (UUID) -> Void
+    /// Stops a stream playing on the Mac by its hash, from the Now Playing bar.
+    var stopStream: (String) -> Void
     var playFromClipboard: () -> Void
     var stop: () -> Void
     var checkAvailability: (UUID) -> Void
@@ -65,7 +67,12 @@ struct ChannelsView: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                StatusBar(status: status, onStop: actions.stop)
+                StatusBar(
+                    status: status,
+                    onStopAll: actions.stop,
+                    onStopStream: actions.stopStream,
+                    onSelectChannel: { ui.selection = $0 }
+                )
             }
         }
         .toolbar {
@@ -156,13 +163,16 @@ struct ChannelsView: View {
     private var sidebar: some View {
         if #available(macOS 26, *) {
             // Rows scroll under the bar with the same blurred edge as the toolbar.
-            channelList.safeAreaBar(edge: .bottom) { newChannelBar }
+            // No divider here: the bar is as tall as the status bar's divider plus its row.
+            channelList.safeAreaBar(edge: .bottom) {
+                newChannelBar.frame(height: BottomBar.rowHeight + BottomBar.dividerHeight)
+            }
         } else {
             // No scroll edge effect: stack them so rows never scroll under the bar.
             VStack(spacing: 0) {
                 channelList
                 Divider()
-                newChannelBar
+                newChannelBar.frame(height: BottomBar.rowHeight)
             }
         }
     }
@@ -177,7 +187,7 @@ struct ChannelsView: View {
             .buttonStyle(.borderless)
             Spacer()
         }
-        .padding(10)
+        .padding(.horizontal, 10)
     }
 
     private var channelList: some View {
@@ -247,6 +257,7 @@ struct ChannelDetailView: View {
     @ObservedObject var status: PlaybackStatus
     @ObservedObject var checker: LinkChecker
     @ObservedObject var transfers = TransferMonitor.shared
+    @ObservedObject var nowPlaying = NowPlaying.shared
     let actions: PlaybackActions
     let onPlay: (StreamLink) -> Void
     let onEditChannel: () -> Void
@@ -277,6 +288,7 @@ struct ChannelDetailView: View {
                             isPlaying: status.playingLinkIDs.contains(link.id),
                             availability: checker.results[link.id],
                             rate: link.stream.flatMap { transfers.rates[$0.hash.lowercased()] },
+                            viewers: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.viewers ?? [],
                             onStop: { actions.stopLink(link.id) },
                             onPlay: {
                                 if NSEvent.modifierFlags.contains(.option) {
@@ -446,6 +458,8 @@ struct LinkRow: View {
     let availability: Availability?
     /// Live transfer rate while the stream plays on the Mac or the TV.
     let rate: TransferRate?
+    /// Who watches it right now (this Mac, other devices).
+    let viewers: [Viewer]
     let onStop: () -> Void
     let onPlay: () -> Void
 
@@ -484,9 +498,15 @@ struct LinkRow: View {
                     SpeedLabel(availability: availability)
                 }
             }
+            // The row separator starts under the title. Without this, the list lines it up
+            // with the last label in the row ("This Mac · IINA" while it plays).
+            .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] }
             Spacer()
-            if let rate = rate {
-                TransferRateLabel(rate: rate)
+            if !viewers.isEmpty || rate != nil {
+                HStack(spacing: 12) {
+                    ViewersLabel(viewers: viewers)
+                    if let rate = rate { TransferRateLabel(rate: rate) }
+                }
             } else {
                 lastSeenLabel
             }
@@ -519,7 +539,7 @@ struct LinkRow: View {
 struct TransferRateLabel: View {
     let rate: TransferRate
 
-    private static func format(_ kbps: Int) -> String {
+    static func format(_ kbps: Int) -> String {
         kbps >= 1024 ? String(format: "%.1f MB/s", Double(kbps) / 1024) : "\(kbps) KB/s"
     }
 
@@ -542,41 +562,226 @@ struct TransferRateLabel: View {
 
 // MARK: - Status bar
 
+/// Shared height of the bars along the bottom of the window (the sidebar's "New Channel" and
+/// the status bar), so their edges line up.
+enum BottomBar {
+    static let rowHeight: CGFloat = 36
+    static let dividerHeight: CGFloat = 1
+}
+
 struct StatusBar: View {
     @ObservedObject var status: PlaybackStatus
-    let onStop: () -> Void
+    @ObservedObject var nowPlaying = NowPlaying.shared
+    @ObservedObject var transfers = TransferMonitor.shared
+    let onStopAll: () -> Void
+    let onStopStream: (String) -> Void
+    let onSelectChannel: (UUID) -> Void
+
+    @AppStorage("nowPlayingExpanded") private var expanded = false
+
+    private var streams: [ActiveStream] { nowPlaying.streams }
+
+    private var message: (icon: AnyView, text: String, isError: Bool)? {
+        switch status.state {
+        case let .working(text):
+            return (AnyView(ProgressView().controlSize(.small)), text, false)
+        case let .failed(text):
+            return (AnyView(Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)), text, true)
+        case .idle, .playing:
+            return nil
+        }
+    }
 
     var body: some View {
-        if status.state != .idle {
+        if message != nil || !streams.isEmpty {
             VStack(spacing: 0) {
-                Divider()
-                HStack(spacing: 8) {
-                    switch status.state {
-                    case .idle:
-                        EmptyView()
-                    case let .working(message):
-                        ProgressView().controlSize(.small)
-                        Text(message)
-                    case let .playing(title):
-                        Image(systemName: "play.fill").foregroundColor(.green)
-                        Text("Playing: \(title)").lineLimit(1)
-                    case let .failed(message):
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                        Text(message).lineLimit(2)
+                if expanded, streams.count > 1 {
+                    NowPlayingPanel(
+                        streams: streams, rates: transfers.rates,
+                        onStop: onStopStream, onStopAll: onStopAll, onSelect: onSelectChannel
+                    )
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                VStack(spacing: 0) {
+                    Divider()
+                    if let message = message {
+                        HStack(spacing: 8) {
+                            message.icon
+                            Text(message.text).lineLimit(2)
+                            Spacer()
+                            if message.isError {
+                                Button("Dismiss") { status.dismiss() }
+                            } else if streams.isEmpty {
+                                Button("Stop", action: onStopAll)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 4)
+                        .frame(minHeight: BottomBar.rowHeight)
                     }
-                    Spacer()
-                    if case .failed = status.state {
-                        Button("Dismiss") { status.dismiss() }
-                    } else {
-                        Button("Stop", action: onStop)
+                    if !streams.isEmpty {
+                        if message != nil { Divider() }
+                        summary
+                            .padding(.horizontal, 14)
+                            .frame(height: BottomBar.rowHeight)
                     }
                 }
                 .font(.callout)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .background(.bar)
             }
-            .background(.bar)
         }
+    }
+
+    @ViewBuilder
+    private var summary: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "play.fill").foregroundColor(.green)
+            if streams.count == 1, let stream = streams.first {
+                Text(stream.name).fontWeight(.semibold).lineLimit(1)
+                ViewersLabel(viewers: stream.viewers)
+                if let rate = transfers.rates[stream.hash] { TransferRateLabel(rate: rate) }
+                Spacer(minLength: 8)
+                Button { onStopStream(stream.hash) } label: {
+                    Image(systemName: "stop.circle.fill").font(.system(size: 16))
+                }
+                .buttonStyle(.borderless)
+                .disabled(!stream.playsOnMac)
+                .help(stream.playsOnMac ? "Stop playing on this Mac"
+                    : "Playing on another device; stop it there")
+            } else {
+                Text("\(streams.count) streams:").fontWeight(.semibold)
+                Text(streams.map(\.name).joined(separator: " + "))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if !totalDown.isEmpty {
+                    Text(totalDown).foregroundColor(.secondary).monospacedDigit()
+                }
+                Spacer(minLength: 8)
+                Button {
+                    withAnimation(.snappy) { expanded.toggle() }
+                } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.up")
+                }
+                .help(expanded ? "Hide the list of streams" : "Show every stream playing")
+            }
+        }
+    }
+
+    private var totalDown: String {
+        let rates = streams.compactMap { transfers.rates[$0.hash] }
+        guard !rates.isEmpty else { return "" }
+        return "· ▼ \(TransferRateLabel.format(rates.reduce(0) { $0 + $1.downKBps })) total"
+    }
+}
+
+/// The expanded Now Playing list above the status bar: one row per stream, with who watches
+/// it and how fast it moves. A floating card, so it reads apart from the list of links.
+struct NowPlayingPanel: View {
+    let streams: [ActiveStream]
+    let rates: [String: TransferRate]
+    let onStop: (String) -> Void
+    let onStopAll: () -> Void
+    let onSelect: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Now Playing")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .textCase(.uppercase)
+                Spacer()
+                Button("Stop All", action: onStopAll)
+                    .controlSize(.small)
+                    .disabled(!streams.contains { $0.playsOnMac })
+                    .help("Stop everything playing on this Mac. Other devices keep playing.")
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
+            Divider()
+            ForEach(streams) { stream in
+                row(stream)
+                if stream.id != streams.last?.id { Divider().padding(.leading, 46) }
+            }
+        }
+        .padding(.bottom, 4)
+        .modifier(PanelBackground())
+    }
+
+    private func row(_ stream: ActiveStream) -> some View {
+        HStack(spacing: 10) {
+            Group {
+                if let icon = stream.channelIcon {
+                    ChannelIconView(icon: icon, size: 24)
+                } else {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                        .frame(width: 24, height: 24)
+                }
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(stream.name).lineLimit(1)
+                if let channel = stream.channelName {
+                    Text(channel).font(.caption).foregroundColor(.secondary).lineLimit(1)
+                }
+            }
+            .frame(minWidth: 140, alignment: .leading)
+            ViewersLabel(viewers: stream.viewers)
+            Spacer(minLength: 8)
+            if let rate = rates[stream.hash] { TransferRateLabel(rate: rate) }
+            Button { onStop(stream.hash) } label: {
+                Image(systemName: "stop.circle.fill").font(.system(size: 16))
+            }
+            .buttonStyle(.borderless)
+            .disabled(!stream.playsOnMac)
+            .help(stream.playsOnMac ? "Stop playing on this Mac"
+                : "Playing on another device; stop it there")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .onTapGesture { stream.channelID.map(onSelect) }
+    }
+}
+
+/// Liquid Glass where available; a material card with a shadow before macOS 26.
+private struct PanelBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content.glassEffect(.regular, in: .rect(cornerRadius: 12))
+        } else {
+            content
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08)))
+                .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+        }
+    }
+}
+
+/// "This Mac · IINA", "Samsung BU8000 43 TV": who watches a stream. Other devices are
+/// named after what they announce on the network, or shown by IP address.
+struct ViewersLabel: View {
+    let viewers: [Viewer]
+    @ObservedObject private var names = LocalDeviceNames.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(viewers, id: \.self) { viewer in
+                switch viewer {
+                case let .thisMac(player):
+                    Label(player.map { "This Mac · \($0)" } ?? "This Mac", systemImage: "laptopcomputer")
+                        .help("Playing on this Mac")
+                case let .device(address):
+                    Label(names.names[address] ?? address, systemImage: "network")
+                        .help("Playing on \(names.names[address].map { "\($0) (\(address))" } ?? address)")
+                }
+            }
+        }
+        .font(.caption)
+        .foregroundColor(.secondary)
+        .lineLimit(1)
     }
 }

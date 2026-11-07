@@ -64,6 +64,7 @@ final class TVShare: ObservableObject {
                 reason: "Sharing streams to TV"
             )
         }
+        LocalDeviceNames.shared.start() // To show which device watches each stream.
         if listener == nil {
             do {
                 try startServer()
@@ -115,10 +116,11 @@ final class TVShare: ObservableObject {
     }
 
     private func handle(_ connection: NWConnection) {
+        let client = Self.clientAddress(of: connection)
         connection.start(queue: queue)
         connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
             let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            self.respond(to: request) { response in
+            self.respond(to: request, client: client) { response in
                 connection.send(content: response, completion: .contentProcessed { _ in
                     connection.cancel()
                 })
@@ -126,7 +128,22 @@ final class TVShare: ObservableObject {
         }
     }
 
-    private func respond(to request: String, send: @escaping (Data) -> Void) {
+    /// The IP address a request came from ("127.0.0.1" for this Mac's own players).
+    private static func clientAddress(of connection: NWConnection) -> String {
+        guard case let .hostPort(host, _) = connection.endpoint else { return "?" }
+        var address: String
+        switch host {
+        case let .ipv4(ipv4): address = "\(ipv4)"
+        case let .ipv6(ipv6): address = "\(ipv6)"
+        case let .name(name, _): address = name
+        @unknown default: address = "\(host)"
+        }
+        address = address.components(separatedBy: "%")[0] // Drop an interface suffix.
+        if address.hasPrefix("::ffff:") { address = String(address.dropFirst(7)) } // IPv4-mapped.
+        return address == "::1" ? "127.0.0.1" : address
+    }
+
+    private func respond(to request: String, client: String, send: @escaping (Data) -> Void) {
         let lines = request.components(separatedBy: "\r\n")
         let parts = (lines.first ?? "").split(separator: " ")
         let target = parts.count > 1 ? String(parts[1]) : "/"
@@ -150,11 +167,11 @@ final class TVShare: ObservableObject {
 
         if path.hasPrefix("/play/") {
             let hop = query.first { $0.name == "hop" }?.value.flatMap(Int.init) ?? 0
-            return play(path: path, hop: hop, host: host, send: send)
+            return play(path: path, hop: hop, host: host, client: client, send: send)
         }
 
         if path.hasPrefix("/hls/") {
-            return proxy(path: path, rawQuery: rawQuery, host: host, send: send)
+            return proxy(path: path, rawQuery: rawQuery, client: client, send: send)
         }
 
         if path.hasPrefix("/icons/") {
@@ -190,13 +207,16 @@ final class TVShare: ObservableObject {
         var commandURL: URL?
         /// Last time a player (the Mac's or a TV) read the stream through the relay.
         var lastRead: Date?
-        /// Last time a TV read it. The Mac's player comes through 127.0.0.1; a TV uses the
-        /// Mac's network address.
+        /// Last time a TV (any other device) read it.
         var lastTVRead: Date?
+        /// Who read it, by IP address ("127.0.0.1" is this Mac), and when last.
+        var readers: [String: Date] = [:]
 
-        func markRead(host: String) {
-            lastRead = Date()
-            if host != "127.0.0.1", host != "localhost" { lastTVRead = lastRead }
+        func markRead(by client: String) {
+            let now = Date()
+            lastRead = now
+            readers[client] = now
+            if client != "127.0.0.1" { lastTVRead = now }
         }
     }
 
@@ -208,7 +228,9 @@ final class TVShare: ObservableObject {
     /// Stream hash -> warm-up. Only touched on `queue`.
     private var warmUps: [String: WarmUp] = [:]
 
-    private func play(path: String, hop: Int, host: String, send: @escaping (Data) -> Void) {
+    private func play(
+        path: String, hop: Int, host: String, client: String, send: @escaping (Data) -> Void
+    ) {
         // Path: /play/<id|infohash>/<hash>.m3u8
         let parts = path.split(separator: "/").map(String.init)
         guard parts.count == 3, ["id", "infohash"].contains(parts[1]),
@@ -222,7 +244,7 @@ final class TVShare: ObservableObject {
         }
 
         let warmUp = warmUp(param: param, hash: hash, fresh: hop == 0)
-        warmUp.markRead(host: host)
+        warmUp.markRead(by: client)
         let deadline = Date().addingTimeInterval(Self.holdSeconds)
         os_log("TV asks for %{public}@ (attempt %d)", String(hash.prefix(7)), hop + 1)
 
@@ -240,6 +262,20 @@ final class TVShare: ObservableObject {
             }
         }
         poll()
+    }
+
+    /// Who is watching each stream through the relay right now, by stream hash: IP
+    /// addresses that read it within the idle window, "127.0.0.1" meaning this Mac.
+    func viewers() -> [String: [String]] {
+        queue.sync {
+            let now = Date()
+            return warmUps.compactMapValues { warmUp -> [String]? in
+                guard warmUp.readyPath != nil else { return nil }
+                let active = warmUp.readers
+                    .filter { now.timeIntervalSince($0.value) < Self.idleSeconds }.keys.sorted()
+                return active.isEmpty ? nil : active
+            }
+        }
     }
 
     /// Streams being watched through the relay (on a TV or the Mac): read recently.
@@ -261,7 +297,9 @@ final class TVShare: ObservableObject {
     //   /hls/<hash>/index.m3u8          the session's playlist, segment URLs rewritten
     //   /hls/<hash>/seg/ace/...         a segment, fetched from the same engine path
 
-    private func proxy(path: String, rawQuery: String?, host: String, send: @escaping (Data) -> Void) {
+    private func proxy(
+        path: String, rawQuery: String?, client: String, send: @escaping (Data) -> Void
+    ) {
         let rest = path.dropFirst("/hls/".count)
         guard let slash = rest.firstIndex(of: "/") else { return send(Self.notFound) }
         let hash = String(rest[..<slash]).lowercased()
@@ -272,7 +310,7 @@ final class TVShare: ObservableObject {
             // The session ended. Players then ask for the channel again (/play/...).
             return send(Self.notFound)
         }
-        warmUp.markRead(host: host)
+        warmUp.markRead(by: client)
 
         if tail == "index.m3u8" {
             relay(playlistURL, hash: hash, send: send) { body in
@@ -362,6 +400,7 @@ final class TVShare: ObservableObject {
         // Reads before the warm-up was renewed still count.
         warmUp.lastRead = warmUps[hash]?.lastRead
         warmUp.lastTVRead = warmUps[hash]?.lastTVRead
+        warmUp.readers = warmUps[hash]?.readers ?? [:]
         warmUps[hash] = warmUp
         // A check testing this stream would cut the TV's session, and a check testing
         // every link at once would starve it.
@@ -524,5 +563,90 @@ final class TVShare: ObservableObject {
             if !ip.hasPrefix("169.254.") { candidates.append((name, ip)) }
         }
         return candidates.sorted { $0.name < $1.name }.first?.ip
+    }
+}
+
+/// Friendly names of the devices on the local network, from what they announce over Bonjour
+/// (e.g. "Samsung BU8000 43 TV"), by IPv4 address. Reverse DNS gives nothing on most home
+/// networks. Resolving only asks mDNS for the address: it doesn't connect to the device.
+final class LocalDeviceNames: NSObject, ObservableObject, NetServiceBrowserDelegate, NetServiceDelegate {
+    static let shared = LocalDeviceNames()
+
+    /// IPv4 address -> name.
+    @Published private(set) var names: [String: String] = [:]
+
+    /// Service types to browse, the one with the most descriptive names first.
+    private static let types = [
+        "_airplay._tcp.", "_googlecast._tcp.", "_raop._tcp.",
+        "_companion-link._tcp.", "_device-info._tcp.", "_smb._tcp."
+    ]
+
+    private var browsers: [NetServiceBrowser] = []
+    /// Services being resolved; NetService must be kept alive until it calls back.
+    private var resolving: [NetService] = []
+    /// IP -> index in `types` of the service its current name came from.
+    private var rank: [String: Int] = [:]
+
+    /// Starts browsing. Call on the main thread (results arrive on its run loop).
+    func start() {
+        guard browsers.isEmpty else { return }
+        for type in Self.types {
+            let browser = NetServiceBrowser()
+            browser.delegate = self
+            browser.searchForServices(ofType: type, inDomain: "local.")
+            browsers.append(browser)
+        }
+    }
+
+    func netServiceBrowser(_: NetServiceBrowser, didFind service: NetService, moreComing _: Bool) {
+        service.delegate = self
+        resolving.append(service)
+        service.resolve(withTimeout: 5)
+    }
+
+    func netServiceDidResolveAddress(_ sender: NetService) {
+        let name = Self.friendlyName(of: sender)
+        let serviceRank = Self.types.firstIndex(of: sender.type) ?? Self.types.count
+        for ip in Self.ipv4Addresses(sender.addresses ?? []) {
+            if let current = rank[ip], current <= serviceRank { continue }
+            rank[ip] = serviceRank
+            names[ip] = name
+        }
+        finish(sender)
+    }
+
+    func netService(_ sender: NetService, didNotResolve _: [String: NSNumber]) {
+        finish(sender)
+    }
+
+    private func finish(_ service: NetService) {
+        service.stop()
+        resolving.removeAll { $0 === service }
+    }
+
+    private static func friendlyName(of service: NetService) -> String {
+        let txt = service.txtRecordData().map(NetService.dictionary(fromTXTRecord:)) ?? [:]
+        if service.type.hasPrefix("_googlecast"), let fn = txt["fn"].flatMap({ String(data: $0, encoding: .utf8) }) {
+            return fn // Cast devices announce an id; their name is in the TXT record.
+        }
+        if service.type.hasPrefix("_raop"), let at = service.name.firstIndex(of: "@") {
+            return String(service.name[service.name.index(after: at)...]) // "A1B2C3D4E5F6@Name"
+        }
+        return service.name
+    }
+
+    private static func ipv4Addresses(_ addresses: [Data]) -> [String] {
+        addresses.compactMap { data -> String? in
+            data.withUnsafeBytes { raw -> String? in
+                guard raw.count >= MemoryLayout<sockaddr_in>.size,
+                      raw.load(as: sockaddr.self).sa_family == sa_family_t(AF_INET)
+                else { return nil }
+                var address = raw.load(as: sockaddr_in.self).sin_addr
+                var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                guard inet_ntop(AF_INET, &address, &buffer, socklen_t(buffer.count)) != nil
+                else { return nil }
+                return String(cString: buffer)
+            }
+        }
     }
 }

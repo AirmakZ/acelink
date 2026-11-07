@@ -131,3 +131,48 @@ private struct SessionStats: Decodable {
         let peers: Int?
     }
 }
+
+/// Someone watching a stream: this Mac (in the player Ace Link opened, if it did) or
+/// another device on the network, known by its IP address.
+enum Viewer: Hashable {
+    case thisMac(player: String?)
+    case device(address: String)
+}
+
+/// A stream being watched somewhere, for the link rows and the Now Playing bar.
+struct ActiveStream: Identifiable, Equatable {
+    /// Lowercased stream hash.
+    let hash: String
+    let name: String
+    let channelID: UUID?
+    let channelName: String?
+    let channelIcon: ChannelIcon?
+    let viewers: [Viewer]
+
+    var id: String { hash }
+
+    /// Plays in a player Ace Link opened on this Mac, so Ace Link can stop it. A TV can
+    /// only be stopped on the TV.
+    var playsOnMac: Bool {
+        viewers.contains { viewer in
+            if case .thisMac(player: .some) = viewer { return true }
+            return false
+        }
+    }
+}
+
+/// Every stream being watched right now, on this Mac or on other devices.
+final class NowPlaying: ObservableObject {
+    static let shared = NowPlaying()
+
+    @Published private(set) var streams: [ActiveStream] = []
+
+    func set(_ streams: [ActiveStream]) {
+        if streams != self.streams { self.streams = streams }
+    }
+
+    func stream(hash: String) -> ActiveStream? {
+        let hash = hash.lowercased()
+        return streams.first { $0.hash == hash }
+    }
+}

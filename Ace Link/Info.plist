@@ -55,5 +55,16 @@
 	<false/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Ace Link shares your channels with TVs on your network and shows which device is watching each one.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_airplay._tcp</string>
+		<string>_googlecast._tcp</string>
+		<string>_companion-link._tcp</string>
+		<string>_raop._tcp</string>
+		<string>_smb._tcp</string>
+		<string>_device-info._tcp</string>
+	</array>
 </dict>
 </plist>

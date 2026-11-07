@@ -100,6 +100,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         guard !isDuplicate else { return }
 
+        // Who watches what: the relay's readers change without any event, so check often.
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.refreshNowPlaying()
+        }
+
         // Real-time transfer rates of what plays on the Mac and the TV, shown in the list.
         TransferMonitor.shared.start(sessions: { [weak self] in
             guard let self = self else { return [:] }
@@ -179,6 +184,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 play: { [weak self] link in self?.play(link: link) },
                 playAlongside: { [weak self] link in self?.play(link: link, alongside: true) },
                 stopLink: { [weak self] in self?.stopPlaying(linkID: $0) },
+                stopStream: { [weak self] in self?.stopPlaying(hash: $0) },
                 playFromClipboard: { [weak self] in self?.playFromClipboard() },
                 stop: { [weak self] in self?.stopPlayback() },
                 checkAvailability: { [weak self] in self?.checkAvailability(channelID: $0) },
@@ -228,9 +234,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Stops one stream playing on the Mac: closes its player and ends its engine session,
     /// so the engine stops downloading it. Other streams (and the TV) keep playing.
     func stopPlaying(linkID: UUID) {
-        let stopping = players.filter { $0.linkID == linkID }
+        stopPlayers { $0.linkID == linkID }
+    }
+
+    /// Stops a stream playing on the Mac, from the Now Playing bar. A TV keeps playing.
+    func stopPlaying(hash: String) {
+        let hash = hash.lowercased()
+        stopPlayers { $0.hash.lowercased() == hash }
+    }
+
+    private func stopPlayers(where matches: (MacPlayer) -> Bool) {
+        let stopping = players.filter(matches)
         guard !stopping.isEmpty else { return }
-        players.removeAll { $0.linkID == linkID }
+        players.removeAll(where: matches)
         for player in stopping {
             os_log("Stop playing %{public}@", String(player.hash.prefix(7)))
             if !player.bundle.isBrowser { player.app?.terminate() }
@@ -870,6 +886,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Updates the status bar and the list highlights after streams start or stop.
     private func updatePlayingStatus() {
+        refreshNowPlaying()
         status.playingLinkIDs = Set(players.compactMap(\.linkID))
         switch players.count {
         case 0: status.nowPlaying = nil
@@ -879,6 +896,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if case .playing = status.state {
             status.dismiss()
         }
+    }
+
+    /// Rebuilds what plays where, for the link rows and the Now Playing bar: the players
+    /// Ace Link opened on this Mac and, while sharing, every device reading the relay.
+    private func refreshNowPlaying() {
+        var viewers: [String: [Viewer]] = [:]
+        var names: [String: String] = [:]
+        for player in players {
+            let hash = player.hash.lowercased()
+            viewers[hash, default: []].append(.thisMac(player: player.bundle.name))
+            names[hash] = player.name
+        }
+        if tv.isEnabled {
+            // This Mac reads the relay as 127.0.0.1, or by its own network address.
+            let ownAddresses = Set(["127.0.0.1"] + [TVShare.localIPAddress()].compactMap { $0 })
+            for (hash, addresses) in tv.viewers() {
+                for address in addresses {
+                    if !ownAddresses.contains(address) {
+                        viewers[hash, default: []].append(.device(address: address))
+                    } else if !(viewers[hash] ?? []).contains(where: {
+                        if case .thisMac = $0 { return true } else { return false }
+                    }) {
+                        viewers[hash, default: []].append(.thisMac(player: nil)) // Another app.
+                    }
+                }
+            }
+        }
+
+        let channels = ChannelStore.shared.channels
+        let streams = viewers.map { hash, viewers -> ActiveStream in
+            let match = channels.lazy.compactMap { channel in
+                channel.links.first { $0.stream?.hash.lowercased() == hash }.map { (channel, $0) }
+            }.first
+            let linkName = match.map { $0.1.name.isEmpty ? "Untitled link" : $0.1.name }
+            return ActiveStream(
+                hash: hash,
+                name: linkName ?? names[hash] ?? String(hash.prefix(7)),
+                channelID: match?.0.id,
+                channelName: match?.0.name,
+                channelIcon: match?.0.icon,
+                viewers: viewers
+            )
+        }
+        NowPlaying.shared.set(streams.sorted {
+            ($0.channelName ?? "~", $0.name, $0.hash) < ($1.channelName ?? "~", $1.name, $1.hash)
+        })
     }
 
     func stopAceStreamServer() {

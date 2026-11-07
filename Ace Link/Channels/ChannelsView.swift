@@ -298,6 +298,14 @@ struct ChannelDetailView: View {
                                 }
                             }
                         )
+                        // A soft green behind every link being watched, on this Mac or on
+                        // another device, so playing links stand out at a glance.
+                        .listRowBackground(
+                            link.stream.flatMap { nowPlaying.stream(hash: $0.hash) } == nil ? nil
+                                : RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.green.opacity(0.14))
+                                    .padding(.horizontal, 4)
+                        )
                         .contextMenu {
                             if status.playingLinkIDs.contains(link.id) {
                                 Button("Stop") { actions.stopLink(link.id) }

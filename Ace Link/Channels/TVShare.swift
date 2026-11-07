@@ -355,6 +355,10 @@ final class TVShare: ObservableObject {
             let session = readyPath
             relay(playlistURL, hash: hash, send: send, onMissing: {
                 self.sessionGone(hash: hash) { $0.readyPath == session }
+            }, fallback: {
+                // Never pass a playlist error on: players give up on it (seen on a TV). The
+                // last good playlist looks like a brief pause while the session restarts.
+                self.queue.sync { warmUp.cachedPlaylist }
             }) { body in
                 self.queue.sync {
                     self.relayPlaylist(String(decoding: body, as: UTF8.self),
@@ -374,12 +378,15 @@ final class TVShare: ObservableObject {
     private func relay(
         _ url: URL, hash: String, send: @escaping (Data) -> Void,
         type: String = "application/vnd.apple.mpegurl", onMissing: (() -> Void)? = nil,
-        transform: ((Data) -> Data)? = nil
+        fallback: (() -> Data?)? = nil, transform: ((Data) -> Data)? = nil
     ) {
         engineSession.dataTask(with: URLRequest(url: url, timeoutInterval: 20)) { data, response, _ in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 502
             guard status == 200, let data = data else {
                 if status == 404 { onMissing?() } // The engine dropped it.
+                if let replacement = fallback?() {
+                    return send(Self.http(200, type: type, body: replacement))
+                }
                 return send(Self.http(status == 404 ? 404 : 502, type: "text/plain",
                                       body: Data("Stream unavailable".utf8)))
             }

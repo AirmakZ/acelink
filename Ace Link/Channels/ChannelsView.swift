@@ -566,7 +566,9 @@ struct ChannelDetailView: View {
                             isLoading: status.activeLinkID == link.id && status.isBusy,
                             isPlaying: status.playingLinkIDs.contains(link.id),
                             availability: checker.results[link.id],
+                            peers: checker.peers[link.id],
                             rate: link.stream.flatMap { transfers.rates[$0.hash.lowercased()] },
+                            lastRate: link.stream.flatMap { transfers.lastRates[$0.hash.lowercased()] },
                             viewers: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.viewers ?? [],
                             connecting: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.connecting,
                             onStop: { actions.stopLink(link.id) },
@@ -719,12 +721,24 @@ struct ChannelDetailView: View {
 
 struct SpeedLabel: View {
     let availability: Availability?
+    var peers: Int?
+    /// The last live rate: newer than the check, so it replaces its data.
+    var lastLive: TransferRate?
+
+    private var peersText: String { peers.map { " · \($0) peers" } ?? "" }
 
     private var label: (text: String, color: Color)? {
+        if let live = lastLive {
+            let peers = " · \(live.peers) peer\(live.peers == 1 ? "" : "s")"
+            if live.downKBps == 0 { return ("stalled" + peers, .orange) }
+            return ("\(live.downKBps) KB/s" + peers,
+                    live.downKBps >= LinkChecker.minimumKBps ? .green : .orange)
+        }
         switch availability {
-        case let .available(kbps)?: return ("\(kbps) KB/s", .green)
-        case let .slow(kbps)?: return (kbps == 0 ? "stalled" : "\(kbps) KB/s · slow", .orange)
-        case .noVideo?: return ("no video", .red)
+        case let .available(kbps)?: return ("\(kbps) KB/s\(peersText)", .green)
+        case let .slow(kbps)?:
+            return ((kbps == 0 ? "stalled" : "\(kbps) KB/s · slow") + peersText, .orange)
+        case .noVideo?: return ("no video\(peersText)", .red)
         case .unavailable?: return ("no peers", .red)
         default: return nil
         }
@@ -733,6 +747,7 @@ struct SpeedLabel: View {
     var body: some View {
         if let label = label {
             Text(label.text).font(.caption).foregroundColor(label.color)
+                .help(lastLive == nil ? "" : "Last measured while playing")
         }
     }
 }
@@ -791,8 +806,12 @@ struct LinkRow: View {
     let isLoading: Bool
     let isPlaying: Bool
     let availability: Availability?
+    /// Peers read in the current check, shown after the speed.
+    let peers: Int?
     /// Live transfer rate while the stream plays on the Mac or the TV.
     let rate: TransferRate?
+    /// The last live rate it had, shown in place of the check's data once it stops.
+    let lastRate: TransferRate?
     /// Who watches it right now (this Mac, other devices).
     let viewers: [Viewer]
     /// What's going on while it connects; nil once it plays.
@@ -801,6 +820,15 @@ struct LinkRow: View {
     let onPlay: () -> Void
 
     @StateObject private var hover = HoverState()
+
+    /// The dot follows the last live rate when there is one, as it is newer than the check
+    /// and video did arrive. A check still running keeps its spinner.
+    private var dotAvailability: Availability? {
+        if availability?.isPending == true { return availability }
+        guard let live = lastRate else { return availability }
+        return live.downKBps >= LinkChecker.minimumKBps
+            ? .available(live.downKBps) : .slow(live.downKBps)
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -829,7 +857,7 @@ struct LinkRow: View {
             .font(.system(size: 22))
             .frame(width: 26)
 
-            AvailabilityDot(availability: availability, previous: link.lastResult)
+            AvailabilityDot(availability: dotAvailability, previous: link.lastResult)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(link.name.isEmpty ? "Untitled link" : link.name)
@@ -838,7 +866,10 @@ struct LinkRow: View {
                     Text(link.shortHash)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundColor(link.stream == nil ? .red : .secondary)
-                    SpeedLabel(availability: availability)
+                    // While live figures show on the right, the check's data stays hidden.
+                    if rate == nil {
+                        SpeedLabel(availability: availability, peers: peers, lastLive: lastRate)
+                    }
                 }
             }
             // The row separator starts under the title. Without this, the list lines it up

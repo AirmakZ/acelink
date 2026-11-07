@@ -24,6 +24,8 @@ struct StreamLink: Codable, Identifiable, Equatable {
     /// The result of the last availability check, kept across launches so the list can
     /// show the previous state (as a ring) until the link is checked again.
     var lastResult: Availability?
+    /// The peers the engine reported in that check, if it could read them.
+    var lastPeers: Int?
 
     var stream: StreamFile? {
         guard let stream = ExtractStream.from(unverifiedData: url), !stream.hash.isEmpty else {
@@ -138,10 +140,11 @@ final class ChannelStore: ObservableObject {
 
     /// Saves a check result on every link that points to the stream. A working result
     /// (green or orange) also updates "last seen".
-    func record(_ result: Availability, hash: String, at date: Date = Date()) {
+    func record(_ result: Availability, peers: Int? = nil, hash: String, at date: Date = Date()) {
         guard !result.isPending else { return }
         updateLinks(hash: hash) { link in
             link.lastResult = result
+            link.lastPeers = peers
             if result.rank <= Availability.slow(0).rank { link.lastSeen = date }
         }
     }

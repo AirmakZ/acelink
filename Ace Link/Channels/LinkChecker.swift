@@ -76,6 +76,8 @@ final class LinkChecker: ObservableObject {
 
     /// Last result per link ID. Kept in memory until the app quits.
     @Published private(set) var results: [UUID: Availability] = [:]
+    /// Peers the engine reported per link, read right after its speed was measured.
+    @Published private(set) var peers: [UUID: Int] = [:]
     /// The channel being checked, if any. Only one check runs at a time.
     @Published private(set) var checkingChannelID: UUID?
 
@@ -107,6 +109,7 @@ final class LinkChecker: ObservableObject {
         checkingLinks = channel.links
         for link in channel.links {
             results[link.id] = .checking
+            peers[link.id] = nil
         }
     }
 
@@ -136,7 +139,7 @@ final class LinkChecker: ObservableObject {
 
         task = Task {
             let outcome = await withTaskGroup(
-                of: (UUID, Availability).self
+                of: (UUID, Availability, Int?).self
             ) { group -> [UUID: Availability] in
                 // Links still to test. Tests interrupted by `throttle` come back at the end.
                 var pending = links
@@ -146,14 +149,15 @@ final class LinkChecker: ObservableObject {
                         guard state.start(link.id) else { continue } // Dropped meanwhile.
                         show(.checking, for: link.id)
                         group.addTask {
-                            (link.id, await Self.measure(link) { state.shouldStop(link.id) })
+                            let (result, peers) = await Self.measure(link) { state.shouldStop(link.id) }
+                            return (link.id, result, peers)
                         }
                     }
                 }
                 fill()
 
                 var outcome: [UUID: Availability] = [:]
-                for await (id, result) in group {
+                for await (id, result, peers) in group {
                     let fate = state.finish(id)
                     if fate == .redo, let link = byID[id] {
                         pending.append(link)
@@ -165,8 +169,10 @@ final class LinkChecker: ObservableObject {
                     await MainActor.run {
                         guard self.checkingChannelID == channel.id else { return }
                         self.results[id] = result
+                        self.peers[id] = peers
                         if let hash = links.first(where: { $0.id == id })?.stream?.hash {
-                            ChannelStore.shared.record(result, hash: hash)
+                            TransferMonitor.shared.forgetLastRate(hash: hash)
+                            ChannelStore.shared.record(result, peers: peers, hash: hash)
                         }
                     }
                 }
@@ -212,13 +218,15 @@ final class LinkChecker: ObservableObject {
         task = nil
         checkingChannelID = nil
         results = results.filter { !$0.value.isPending }
+        peers = peers.filter { results[$0.key] != nil }
     }
 
-    /// `stop` ends the test early (its result is then ignored).
+    /// `stop` ends the test early (its result is then ignored). Also returns the peers the
+    /// engine reported, if they could be read.
     private static func measure(
         _ link: StreamLink, stop: @escaping () -> Bool
-    ) async -> Availability {
-        guard let stream = link.stream else { return .unavailable }
+    ) async -> (Availability, Int?) {
+        guard let stream = link.stream else { return (.unavailable, nil) }
         let short = String(stream.hash.prefix(7))
         let api = URLSession(configuration: .ephemeral)
         defer { api.invalidateAndCancel() }
@@ -238,7 +246,7 @@ final class LinkChecker: ObservableObject {
             let playbackURL = URL(string: streamSession.playbackURL)
         else {
             os_log("Link %{public}@ did not start.", short)
-            return .unavailable
+            return (.unavailable, nil)
         }
 
         // Read the video like a player does. The engine stops downloading once its
@@ -249,6 +257,7 @@ final class LinkChecker: ObservableObject {
         player.dataTask(with: URLRequest(url: playbackURL, timeoutInterval: timeout)).resume()
 
         var result: Availability
+        var peers: Int?
         let deadline = Date().addingTimeInterval(timeout)
         while reader.snapshot.firstByte == nil, !reader.snapshot.ended,
               Date() < deadline, !Task.isCancelled, !stop() {
@@ -264,10 +273,12 @@ final class LinkChecker: ObservableObject {
             let seconds = max(Date().timeIntervalSince(firstByte) - warmUpSeconds, 1)
             let kbps = Int(Double(end.bytes - begin.bytes) / 1024 / seconds)
             result = kbps >= minimumKBps ? .available(kbps) : .slow(kbps)
+            // Peers are read after the speed, while the session is still open.
+            peers = await stats(api, streamSession.statURL)?.peers
         } else {
             // No video. Tell "nobody shares it" apart from "shared but not playable".
-            let peers = await stats(api, streamSession.statURL)?.peers ?? 0
-            result = peers > 0 ? .noVideo : .unavailable
+            peers = await stats(api, streamSession.statURL)?.peers
+            result = (peers ?? 0) > 0 ? .noVideo : .unavailable
         }
 
         player.invalidateAndCancel()
@@ -275,8 +286,8 @@ final class LinkChecker: ObservableObject {
         if let commandURL = URL(string: streamSession.commandURL) {
             _ = try? await api.data(from: commandURL.appendingQuery("method", "stop"))
         }
-        os_log("Link %{public}@: %{public}@", short, "\(result)")
-        return result
+        os_log("Link %{public}@: %{public}@, peers: %d", short, "\(result)", peers ?? -1)
+        return (result, peers)
     }
 
     private static func sleep(until date: Date, stop: () -> Bool) async {

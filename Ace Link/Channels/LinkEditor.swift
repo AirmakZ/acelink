@@ -117,6 +117,7 @@ struct LinkEditor: View {
                     if hash != originalHash { // Both were about the old stream.
                         saved.lastSeen = nil
                         saved.lastResult = nil
+                        saved.lastPeers = nil
                     }
                     onSave(saved)
                 }

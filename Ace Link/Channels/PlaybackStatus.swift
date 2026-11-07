@@ -62,6 +62,8 @@ final class TransferMonitor: ObservableObject {
 
     /// By lowercased stream hash.
     @Published private(set) var rates: [String: TransferRate] = [:]
+    /// The last live rate of each stream, kept after it stops playing.
+    @Published private(set) var lastRates: [String: TransferRate] = [:]
 
     private static let interval: TimeInterval = 2
     /// Readings averaged over, so the figures don't jump with every packet (≈ 6 s).
@@ -124,7 +126,15 @@ final class TransferMonitor: ObservableObject {
             upKBps: max(0, Int(Double(last.uploaded - first.uploaded) / 1024 / seconds)),
             peers: stats.peers ?? 0
         )
-        if rates[hash] != rate { rates[hash] = rate }
+        if rates[hash] != rate {
+            rates[hash] = rate
+            lastRates[hash] = rate
+        }
+    }
+
+    /// Drops the last live rate of a stream, e.g. because a newer check measured it.
+    func forgetLastRate(hash: String) {
+        lastRates[hash.lowercased()] = nil
     }
 }
 

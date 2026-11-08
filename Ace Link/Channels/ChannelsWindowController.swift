@@ -15,8 +15,6 @@ final class ChannelsWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
         window.title = "Ace Link"
-        // The title bar stays empty for now; the title is kept for the Window menu and Mission Control.
-        window.titleVisibility = .hidden
         window.contentViewController = NSHostingController(rootView: view)
         window.setContentSize(NSSize(width: 820, height: 540))
         window.center()

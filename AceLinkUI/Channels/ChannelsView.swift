@@ -176,28 +176,29 @@ final class ChannelsUIState: ObservableObject {
     @Published var dropTarget: UUID?
 }
 
-/// Local/Remote switch, at the left of the sidebar's bottom bar. It turns red, with a
-/// warning, when the remote list could not be updated (the saved copy is shown meanwhile).
-struct SourceSwitch: View {
+/// Local/Remote selector in the sidebar's part of the toolbar. The Remote segment shows a red warning when
+/// the remote list could not be updated (the saved copy is shown meanwhile).
+struct SourcePicker: View {
     @ObservedObject var remote = RemoteList.shared
     @AppStorage("showRemoteList") private var showRemote = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            Toggle("Remote list", isOn: $showRemote)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .tint(remote.failure == nil ? nil : .red)
-                .help(showRemote ? "Showing the remote list. Switch to your own channels."
-                    : "Showing your own channels. Switch to the remote list.")
-            if let message = remote.failure {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .font(.caption)
-                    .foregroundColor(.red)
-                    .help("Could not update the remote list: \(message). Showing the saved copy.")
-            }
+        Picker("Source", selection: $showRemote) {
+            Label("Local", systemImage: "internaldrive")
+                .labelStyle(.iconOnly)
+                .help("Your own channels")
+                .tag(false)
+            Label("Remote", systemImage: remote.failure == nil
+                ? "globe" : "exclamationmark.triangle")
+                .labelStyle(.iconOnly)
+                .foregroundColor(remote.failure == nil ? nil : .red)
+                .help(remote.failure.map {
+                    "Could not update the remote list: \($0). Showing the saved copy."
+                } ?? "The remote list")
+                .tag(true)
         }
+        .pickerStyle(.segmented)
+        .labelsHidden()
     }
 }
 
@@ -237,6 +238,78 @@ struct RemoteURLEditor: View {
     }
 }
 
+/// The toolbar shows the channel instead of "Ace Link"; the window keeps its title for
+/// the Window menu. Removed through SwiftUI, which then lays out the rest of the toolbar.
+/// The sidebar pane of the window's NSSplitView, which NavigationSplitView manages.
+enum SplitSidebar {
+    /// Shows or hides the pane right away. SwiftUI animates it from the window's edge
+    /// even with animations disabled, and starts doing so a couple of frames late.
+    static func setCollapsedNow(_ collapsed: Bool, in window: NSWindow?) {
+        guard let split = window?.contentView.flatMap(splitView(in:)),
+              let item = (split.delegate as? NSSplitViewController)?.splitViewItems.first,
+              item.isCollapsed != collapsed
+        else { return }
+        item.isCollapsed = collapsed
+        split.layoutSubtreeIfNeeded()
+    }
+
+    private static func splitView(in view: NSView) -> NSSplitView? {
+        if let split = view as? NSSplitView { return split }
+        for subview in view.subviews {
+            if let split = splitView(in: subview) { return split }
+        }
+        return nil
+    }
+}
+
+/// The translucent background of a sidebar, for the icon column that stands in for it.
+private struct SidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+/// A gray band behind the title bar, over the detail, so the bar looks the same with
+/// the sidebar open or closed instead of taking the color of the content under it.
+private struct TitleBarBand: View {
+    var body: some View {
+        GeometryReader { geometry in
+            SidebarMaterial()
+                .frame(height: geometry.safeAreaInsets.top)
+                .offset(y: -geometry.safeAreaInsets.top)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Removes the system's sidebar button, which hides the sidebar completely; ChannelsView
+/// has its own that leaves the channel icons. (On macOS 13 the system's one stays.)
+private struct OwnSidebarToggle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 14, *) {
+            content.toolbar(removing: .sidebarToggle)
+        } else {
+            content
+        }
+    }
+}
+
+private struct HiddenWindowTitle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content
+        }
+    }
+}
+
 struct ChannelsView: View {
     @ObservedObject var store: ChannelStore
     @ObservedObject var status: PlaybackStatus
@@ -249,63 +322,48 @@ struct ChannelsView: View {
     @StateObject private var ui = ChannelsUIState()
     /// Local: the channels you edit. Remote: a read-only list loaded from an m3u.
     @AppStorage("showRemoteList") private var showRemote = false
+    /// The sidebar shrunk to a column of channel icons (the sidebar button's "hidden").
+    @AppStorage("sidebarIconsOnly") private var iconsOnly = false
 
     private var current: ChannelStore { showRemote ? remoteStore : store }
 
     private var remoteFailure: String? { remote.failure }
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
+        // With "Hide Sidebar" the system column hides and a column of channel icons takes
+        // its place inside the detail. (Resizing the system column instead isn't reliable.)
+        NavigationSplitView(columnVisibility: Binding(
+            get: { iconsOnly ? .detailOnly : .all },
+            set: { iconsOnly = $0 == .detailOnly }
+        )) {
+            sidebar(compact: false)
+                .toolbar {
+                    // The column hides with the icons, but its toolbar items would stay.
+                    if !iconsOnly {
+                        // First, so it stays put when the sidebar shrinks to icons.
+                        ToolbarItem { sidebarToggle }
+                        ToolbarItem { SourcePicker() }
+                    }
+                }
+                .modifier(OwnSidebarToggle())
                 .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 320)
         } detail: {
-            Group {
-                if let channel = current.channel(id: ui.selection) {
-                    ChannelDetailView(
-                        channel: channel,
-                        store: current,
-                        readOnly: showRemote,
-                        status: status,
-                        checker: checker,
-                        actions: actions,
-                        onPlay: actions.play,
-                        onEditChannel: { ui.editingChannel = channel },
-                        onEditLink: { ui.editingLink = $0 },
-                        onBulkAdd: { ui.bulkAdd = BulkAddTarget(id: channel.id) }
-                    )
-                } else {
-                    emptyDetail
+            HStack(spacing: 0) {
+                if iconsOnly {
+                    // The sidebar's material, also under the toolbar, so it reads as the
+                    // same sidebar and not as part of the detail.
+                    sidebar(compact: true)
+                        // The system column starts its rows 10 pt higher; match it so the
+                        // icons don't jump.
+                        .padding(.top, -10)
+                        .scrollContentBackground(.hidden)
+                        .background(SidebarMaterial().ignoresSafeArea())
+                        .frame(width: Self.iconColumnWidth)
+                    Divider()
                 }
+                detail
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                StatusBar(
-                    status: status,
-                    onStopAll: actions.stop,
-                    onStopStream: actions.stopStream,
-                    onCancelOpening: actions.cancelOpening,
-                    onSelectChannel: { ui.selection = $0 }
-                )
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    ui.showTVPanel.toggle()
-                } label: {
-                    Label("Share to TV", systemImage: tv.isEnabled ? "tv.fill" : "tv")
-                        .foregroundColor(tvColor)
-                }
-                .help("Watch your channels on a TV")
-                .popover(isPresented: $ui.showTVPanel, arrowEdge: .bottom) {
-                    TVSharePanel(tv: tv, onToggle: actions.setTVSharing)
-                }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: actions.playFromClipboard) {
-                    Label("Play from Clipboard", systemImage: "doc.on.clipboard")
-                }
-                .help("Play the AceStream link currently on your clipboard")
-            }
+            .overlay(alignment: .top) { TitleBarBand() }
         }
         .sheet(isPresented: $ui.editingRemoteURL) {
             RemoteURLEditor(
@@ -375,6 +433,133 @@ struct ChannelsView: View {
             if showRemote, remoteFailure != nil { remote.refresh() }
         }
         .frame(minWidth: 640, minHeight: 400)
+        .modifier(HiddenWindowTitle())
+    }
+
+    static let iconColumnWidth: CGFloat = 64
+
+    private var detail: some View {
+        Group {
+            if let channel = current.channel(id: ui.selection) {
+                ChannelDetailView(
+                    channel: channel,
+                    store: current,
+                    readOnly: showRemote,
+                    status: status,
+                    checker: checker,
+                    actions: actions,
+                    onPlay: actions.play,
+                    onEditChannel: { ui.editingChannel = channel },
+                    onEditLink: { ui.editingLink = $0 },
+                    onBulkAdd: { ui.bulkAdd = BulkAddTarget(id: channel.id) }
+                )
+            } else {
+                emptyDetail
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            StatusBar(
+                status: status,
+                onStopAll: actions.stop,
+                onStopStream: actions.stopStream,
+                onCancelOpening: actions.cancelOpening,
+                onSelectChannel: { ui.selection = $0 }
+            )
+        }
+        .toolbar {
+            // The sidebar's own corner is under the window buttons when it's narrow.
+            if iconsOnly {
+                ToolbarItem(placement: .navigation) { sidebarToggle }
+            }
+            // Pushes everything after the channel title to the trailing edge.
+            if #available(macOS 26, *) { ToolbarSpacer(.flexible, placement: .primaryAction) }
+            if let channel = current.channel(id: ui.selection) {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    checkControls(for: channel)
+                    if !showRemote { addMenu(for: channel) }
+                }
+                if #available(macOS 26, *) { ToolbarSpacer(.fixed, placement: .primaryAction) }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    ui.showTVPanel.toggle()
+                } label: {
+                    Label("Share to TV", systemImage: tv.isEnabled ? "tv.fill" : "tv")
+                        .foregroundColor(tvColor)
+                }
+                .help("Watch your channels on a TV")
+                .popover(isPresented: $ui.showTVPanel, arrowEdge: .bottom) {
+                    TVSharePanel(tv: tv, onToggle: actions.setTVSharing)
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: actions.playFromClipboard) {
+                    Label("Play from Clipboard", systemImage: "doc.on.clipboard")
+                }
+                .help("Play the AceStream link currently on your clipboard")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sidebarToggle: some View {
+        if #available(macOS 14, *) {
+            Button {
+                // No animation, and the system column changed in AppKit first: SwiftUI
+                // slides it in or out a few frames after the icon column has changed,
+                // so for a moment the icons or the links would sit in the wrong place.
+                SplitSidebar.setCollapsedNow(!iconsOnly, in: NSApp.keyWindow)
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { iconsOnly.toggle() }
+            } label: {
+                Label(iconsOnly ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left")
+            }
+            .help(iconsOnly ? "Show the channel names" : "Show only the channel icons")
+        }
+    }
+
+    /// Check Availability, or a spinner and Cancel while this channel is being checked.
+    @ViewBuilder
+    private func checkControls(for channel: Channel) -> some View {
+        if checker.checkingChannelID == channel.id {
+            // A bare spinner gets none of a toolbar button's margins and would touch the
+            // capsule's edge; give it a button's width.
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 28)
+                .help("Checking…")
+            Button(action: actions.cancelCheck) {
+                Label("Cancel Check", systemImage: "xmark")
+            }
+            .help("Cancel the availability check")
+        } else {
+            Button {
+                actions.checkAvailability(channel.id)
+            } label: {
+                Label("Check Availability", systemImage: "antenna.radiowaves.left.and.right")
+            }
+            .disabled(channel.links.isEmpty || checker.isRunning || status.isBusy)
+            .help("Check Availability: test every link at the same time. "
+                + "Working links move to the top.")
+        }
+    }
+
+    private func addMenu(for channel: Channel) -> some View {
+        Menu {
+            Button("Add Link…") {
+                let draft = LinkEditor.draftFromClipboard(
+                    defaultName: "Link \(channel.links.count + 1)"
+                )
+                ui.editingLink = LinkEditTarget(channelID: channel.id, link: draft, isNew: true)
+            }
+            Button("Add in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
+            Divider()
+            Button("Edit Channel…") { ui.editingChannel = channel }
+        } label: {
+            Label("Add", systemImage: "plus")
+        }
+        .help("Add links to this channel")
     }
 
     private var tvColor: Color {
@@ -385,25 +570,44 @@ struct ChannelsView: View {
         }
     }
 
+    /// The channel list and its bottom bar; `compact` is the icon column.
     @ViewBuilder
-    private var sidebar: some View {
+    private func sidebar(compact: Bool) -> some View {
         if #available(macOS 26, *) {
             // Rows scroll under the bar with the same blurred edge as the toolbar.
             // No divider here: the bar is as tall as the status bar's divider plus its row.
-            channelList.safeAreaBar(edge: .bottom) {
-                newChannelBar.frame(height: BottomBar.rowHeight + BottomBar.dividerHeight)
+            channelList(compact: compact).safeAreaBar(edge: .bottom) {
+                newChannelBar(compact: compact)
+                    .frame(height: BottomBar.rowHeight + BottomBar.dividerHeight)
             }
         } else {
             // No scroll edge effect: stack them so rows never scroll under the bar.
             VStack(spacing: 0) {
-                channelList
+                channelList(compact: compact)
                 Divider()
-                newChannelBar.frame(height: BottomBar.rowHeight)
+                newChannelBar(compact: compact).frame(height: BottomBar.rowHeight)
             }
         }
     }
 
-    private var newChannelBar: some View {
+    @ViewBuilder
+    private func newChannelBar(compact: Bool) -> some View {
+        if compact {
+            if !showRemote {
+                Button {
+                    ui.editingChannel = Channel(name: "")
+                } label: {
+                    Label("New Channel", systemImage: "plus").labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .help("New Channel")
+            }
+        } else {
+            fullNewChannelBar
+        }
+    }
+
+    private var fullNewChannelBar: some View {
         HStack(spacing: 6) {
             if showRemote {
                 remoteStatus.font(.callout).foregroundColor(.secondary)
@@ -416,7 +620,6 @@ struct ChannelsView: View {
                 .buttonStyle(.borderless)
             }
             Spacer(minLength: 0)
-            SourceSwitch()
             // Same spot for both: refresh on the remote list, its address when local.
             Group {
                 if showRemote {
@@ -451,23 +654,11 @@ struct ChannelsView: View {
         }
     }
 
-    private var channelList: some View {
+    private func channelList(compact: Bool) -> some View {
+        // Explicit: the icon column lives in the detail, which would default to .inset.
         List(selection: $ui.selection) {
             ForEach(current.channels) { channel in
-                HStack(spacing: 10) {
-                    ChannelIconView(icon: channel.icon, size: 26)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(channel.name).lineLimit(1)
-                        Text("\(channel.links.count) link\(channel.links.count == 1 ? "" : "s")")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer(minLength: 4)
-                    AvailabilityDot(
-                        availability: checker.bestResult(for: channel),
-                        previous: checker.bestPreviousResult(for: channel)
-                    )
-                }
+                channelRow(channel, compact: compact)
                 .padding(.vertical, 3)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
@@ -507,11 +698,37 @@ struct ChannelsView: View {
             }
             .onMove(perform: showRemote ? nil : store.moveChannels)
         }
+        .listStyle(.sidebar)
         .onDeleteCommand {
             if !showRemote, let channel = store.channel(id: ui.selection) {
                 ui.channelPendingDelete = channel
             }
         }
+    }
+
+    /// The same row in both sidebar widths, so the icons don't move or resize when the
+    /// sidebar shrinks: the icon column only hides the text and moves the dot to the icon.
+    private func channelRow(_ channel: Channel, compact: Bool) -> some View {
+        let dot = AvailabilityDot(
+            availability: checker.bestResult(for: channel),
+            previous: checker.bestPreviousResult(for: channel)
+        )
+        return HStack(spacing: 10) {
+            ChannelIconView(icon: channel.icon, size: 26)
+                .overlay(alignment: .bottomTrailing) {
+                    if compact { dot.offset(x: 4, y: 4) }
+                }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(channel.name).lineLimit(1)
+                Text("\(channel.links.count) link\(channel.links.count == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .opacity(compact ? 0 : 1)
+            Spacer(minLength: 4)
+            if !compact { dot }
+        }
+        .help(compact ? channel.name : "")
     }
 
     private var emptyDetail: some View {
@@ -596,9 +813,54 @@ struct ChannelDetailView: View {
     }
 
     var body: some View {
+        content
+            .toolbar { toolbarContent }
+            // Invisible, but still answering their shortcuts.
+            .background(shortcuts.opacity(0).allowsHitTesting(false))
+    }
+
+    // MARK: Toolbar
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if #available(macOS 26, *) {
+            // A title, not a button: no glass capsule behind it.
+            ToolbarItem(placement: .navigation) { titleItem }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigation) { titleItem }
+        }
+    }
+
+    /// Icon, name, a pencil that edits the channel, and the link count.
+    private var titleItem: some View {
+        HStack(spacing: 8) {
+            ChannelIconView(icon: channel.icon, size: 34)
+            Text(channel.name).font(.title).bold().lineLimit(1)
+            if !readOnly {
+                Button(action: onEditChannel) {
+                    Image(systemName: "pencil")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Edit Channel")
+            }
+            Text("\(channel.links.count) link\(channel.links.count == 1 ? "" : "s")")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .padding(.leading, 6)
+        }
+        // The toolbar starts the item 4 pt from the sidebar's edge; this makes the gap
+        // to the icon match the 9 pt above and below it (52 pt bar, 34 pt icon).
+        .padding(.leading, 5)
+        .fixedSize()
+    }
+
+    // MARK: Content
+
+    private var content: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
             if channel.links.isEmpty {
                 VStack(spacing: 10) {
                     Text("No links in this channel").font(.title3)
@@ -726,45 +988,13 @@ struct ChannelDetailView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 14) {
-            ChannelIconView(icon: channel.icon, size: 52)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(channel.name).font(.title2).bold()
-                Text("\(channel.links.count) link\(channel.links.count == 1 ? "" : "s")")
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-            checkButton
-            if !readOnly {
-                Button("Edit", action: onEditChannel)
-                Button("Add in Bulk…", action: onBulkAdd)
-                    .keyboardShortcut("l", modifiers: [.command, .shift])
-                Button(action: addLink) {
-                    Label("Add Link", systemImage: "plus")
-                }
-                .keyboardShortcut("l")
-            }
-        }
-        .padding(16)
-    }
-
+    /// ⌘L and ⇧⌘L, which the buttons of the old header carried; the toolbar's Add menu
+    /// can't hold them.
     @ViewBuilder
-    private var checkButton: some View {
-        if checker.checkingChannelID == channel.id {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Checking…").foregroundColor(.secondary)
-                Button("Cancel", action: actions.cancelCheck)
-            }
-        } else {
-            Button {
-                actions.checkAvailability(channel.id)
-            } label: {
-                Label("Check Availability", systemImage: "antenna.radiowaves.left.and.right")
-            }
-            .disabled(channel.links.isEmpty || checker.isRunning || status.isBusy)
-            .help("Test every link at the same time. Working links move to the top.")
+    private var shortcuts: some View {
+        if !readOnly {
+            Button("Add Link", action: addLink).keyboardShortcut("l")
+            Button("Add in Bulk…", action: onBulkAdd).keyboardShortcut("l", modifiers: [.command, .shift])
         }
     }
 

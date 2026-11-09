@@ -89,13 +89,16 @@ final class LinkChecker: ObservableObject {
 
     var isRunning: Bool { checkingChannelID != nil }
 
-    /// The most favorable result among a channel's links, for the sidebar: green if any
-    /// link works, else orange if any is slow, else "checking" while some are still
-    /// being tested, else red. Nil if none of its links has been checked.
+    /// A channel's result for the sidebar: "checking" (or "waiting" if all that's left is
+    /// queued) until every link has its result, then the most favorable one: green if any
+    /// link works, else orange if any is slow, else red. Nil if none has been checked.
+    /// Pending wins over a link that already works, so the sidebar keeps spinning for as
+    /// long as the check runs instead of turning green with the first good link.
     func bestResult(for channel: Channel) -> Availability? {
-        // Between pending results, show "being tested" rather than "waiting".
-        channel.links.compactMap { results[$0.id] }
-            .min { ($0.rank, $0 == .queued ? 1 : 0) < ($1.rank, $1 == .queued ? 1 : 0) }
+        let channelResults = channel.links.compactMap { results[$0.id] }
+        if channelResults.contains(.checking) { return .checking }
+        if channelResults.contains(.queued) { return .queued }
+        return channelResults.min { $0.rank < $1.rank }
     }
 
     /// Like `bestResult`, from the results saved by earlier checks (shown as a ring).

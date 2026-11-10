@@ -29,7 +29,7 @@ class MainMenu: NSMenu {
     )
 
     let quitItem = NSMenuItem(
-        title: "Quit Ace Link",
+        title: "Quit AceLinkUI",
         action: #selector(NSApplication.shared.terminate(_:)),
         keyEquivalent: "q"
     )
@@ -72,7 +72,7 @@ class MainMenu: NSMenu {
     @objc
     func openHelpDialog(_: NSMenuItem?) {
         let alert = NSAlert()
-        alert.messageText = "How to open a stream using Ace Link?"
+        alert.messageText = "How to open a stream using AceLinkUI?"
         alert.informativeText = """
         The Open stream option is enabled when a supported format is detected on your clipboard.
 
@@ -87,7 +87,7 @@ class MainMenu: NSMenu {
         • Magnet URI starting with magnet:?x followed by parameters.
         Example: magnet:?xt=urn:btih:c12fe1c06bbe254a9dc9f519b335aa7c1367a88a
 
-        You can also open streams by selecting Ace Link when opening acestream:// or magnet: links.
+        You can also open streams by selecting AceLinkUI when opening acestream:// or magnet: links.
         """
         alert.accessoryView = NSView(frame: NSRect(x: 0, y: 0, width: 500, height: 0))
         alert.alertStyle = .informational

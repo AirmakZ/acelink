@@ -5,7 +5,7 @@ import Network
 /// engine answers at the same address as it did under Docker (`--publish`).
 final class PortForwarder: @unchecked Sendable {
     private let listener: NWListener
-    private let queue = DispatchQueue(label: "acelink-engine.forwarder")
+    private let queue = DispatchQueue(label: "acelinkui-engine.forwarder")
 
     init(port: UInt16, to host: String) throws {
         let parameters = NWParameters.tcp

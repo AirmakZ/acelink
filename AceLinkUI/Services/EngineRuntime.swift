@@ -2,12 +2,12 @@ import Foundation
 import os
 
 /// Where the AceStream engine runs. On Apple silicon with macOS 26 it runs in a Linux VM
-/// started by the `acelink-engine` helper inside the app (Apple's Containerization
+/// started by the `acelinkui-engine` helper inside the app (Apple's Containerization
 /// framework), so Docker isn't needed. Elsewhere, or with the `UseDocker` default set,
 /// it runs in Docker as before.
 enum EngineRuntime {
     /// The helper, next to the app's executable. Missing when it couldn't be built.
-    static let helperURL = Bundle.main.url(forAuxiliaryExecutable: "acelink-engine")
+    static let helperURL = Bundle.main.url(forAuxiliaryExecutable: "acelinkui-engine")
 
     static let usesVM: Bool = {
         guard #available(macOS 26, *), helperURL != nil,
@@ -22,7 +22,7 @@ enum EngineRuntime {
     /// The helper's data: kernel, images, logs (same folder the helper uses).
     static let directory = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Ace Link/Engine")
+        .appendingPathComponent("AceLinkUI/Engine")
 
     /// Shared with the VM as /acelink: the players' playlists go here.
     static let playlistDirectory = directory.appendingPathComponent("playlists")

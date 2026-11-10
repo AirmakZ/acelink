@@ -11,9 +11,9 @@ private struct GetReleasesResponse: Decodable {
 }
 
 class UpdateMenu: PartialMenu {
-    private let aceLinkDownloadLatestUrl = "https://github.com/blaise-io/acelink/releases/latest"
+    private let aceLinkDownloadLatestUrl = "https://github.com/AirmakZ/AceLinkUI/releases/latest"
     private let aceLinkLatestApiUrl =
-        "https://api.github.com/repos/blaise-io/acelink/releases/latest"
+        "https://api.github.com/repos/AirmakZ/AceLinkUI/releases/latest"
 
     private let updateItem = NSMenuItem(
         title: "Update",
@@ -66,7 +66,7 @@ class UpdateMenu: PartialMenu {
                 for item in self.items {
                     item.isHidden = false
                 }
-                self.updateItem.title = "Update to Ace Link \(githubLatestVersion)"
+                self.updateItem.title = "Update to AceLinkUI \(githubLatestVersion)"
             }
         }.resume()
     }

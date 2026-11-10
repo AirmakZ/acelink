@@ -14,7 +14,7 @@ final class ChannelsWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Ace Link"
+        window.title = "AceLinkUI"
         window.contentViewController = NSHostingController(rootView: view)
         window.setContentSize(NSSize(width: 820, height: 540))
         window.center()
@@ -31,23 +31,23 @@ final class ChannelsWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-/// The menu bar at the top of the screen (Ace Link, Edit, Window), needed now that
+/// The menu bar at the top of the screen (AceLinkUI, Edit, Window), needed now that
 /// the app has a regular window: it gives text fields copy/paste and Cmd+Q/Cmd+W.
 enum AppMainMenu {
     static func build(target: AppDelegate) -> NSMenu {
         let main = NSMenu()
 
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Ace Link",
+        appMenu.addItem(withTitle: "About AceLinkUI",
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                         keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide Ace Link", action: #selector(NSApplication.hide(_:)),
+        appMenu.addItem(withTitle: "Hide AceLinkUI", action: #selector(NSApplication.hide(_:)),
                         keyEquivalent: "h")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Ace Link", action: #selector(NSApplication.terminate(_:)),
+        appMenu.addItem(withTitle: "Quit AceLinkUI", action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")
-        main.addItem(submenu(appMenu, title: "Ace Link"))
+        main.addItem(submenu(appMenu, title: "AceLinkUI"))
 
         let editMenu = NSMenu(title: "Edit")
         editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")

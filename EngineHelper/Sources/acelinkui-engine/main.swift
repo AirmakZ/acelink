@@ -1,17 +1,17 @@
 import Foundation
 
 // Usage:
-//   acelink-engine prepare --image <ref>
+//   acelinkui-engine prepare --image <ref>
 //       Downloads the kernel, the VM's init filesystem and the engine image, and unpacks
 //       the image's root filesystem. Safe to run again: whatever is there is reused.
-//   acelink-engine run --image <ref> --share <dir> [--port <n>]... -- <engine arguments>
+//   acelinkui-engine run --image <ref> --share <dir> [--port <n>]... -- <engine arguments>
 //       Boots the engine VM and forwards each port from 127.0.0.1 to it. Runs until it gets
-//       SIGTERM or SIGINT, or Ace Link (the parent process) exits.
+//       SIGTERM or SIGINT, or AceLinkUI (the parent process) exits.
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
 func fail(_ message: String) -> Never {
-    FileHandle.standardError.write(Data("acelink-engine: \(message)\n".utf8))
+    FileHandle.standardError.write(Data("acelinkui-engine: \(message)\n".utf8))
     exit(1)
 }
 

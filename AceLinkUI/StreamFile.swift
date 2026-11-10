@@ -61,7 +61,7 @@ struct StreamFile {
     }
 
     var m3uData: String {
-        "#EXTM3U\n#EXTINF:0, Ace Link - \(title)\n\(streamURL.absoluteString)"
+        "#EXTM3U\n#EXTINF:0, AceLinkUI - \(title)\n\(streamURL.absoluteString)"
     }
 
     func addToHistory() {

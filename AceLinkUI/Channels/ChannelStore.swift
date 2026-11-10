@@ -48,7 +48,7 @@ struct Channel: Codable, Identifiable, Equatable {
 }
 
 /// Keeps the channel list in memory and saves it to
-/// ~/Library/Application Support/Ace Link/channels.json on every change.
+/// ~/Library/Application Support/AceLinkUI/channels.json on every change.
 final class ChannelStore: ObservableObject {
     static let shared = ChannelStore()
 
@@ -58,7 +58,7 @@ final class ChannelStore: ObservableObject {
 
     static var baseDir: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Ace Link")
+            .appendingPathComponent("AceLinkUI")
     }
 
     static var iconsDir: URL { baseDir.appendingPathComponent("icons") }

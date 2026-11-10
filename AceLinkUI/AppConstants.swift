@@ -22,9 +22,14 @@ public enum AppConstants {
     enum Docker {
         static let baseURL = URL(string: "http://127.0.0.1:\(enginePort)")!
         static let bundleID = "com.docker.docker"
-        static let containerName = "acelink--ace-stream-server"
+        static let containerName = "acelinkui-engine"
+        /// The container Ace Link (the project this one comes from) used; removed before ours starts.
+        static let legacyContainerName = "acelink--ace-stream-server"
         static let enginePort = 6878
-        static let image = "blaiseio/acelink:\(AppConstants.version)"
+        /// The AceStream version in the engine image, which is also its tag. Must match
+        /// ACESTREAM_VERSION in the Dockerfile.
+        static let engineVersion = "3.2.11"
+        static let image = "ghcr.io/airmakz/acelinkui:\(engineVersion)"
         static let proxyPort = 6888
     }
 }

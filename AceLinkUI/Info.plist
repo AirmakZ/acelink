@@ -26,7 +26,7 @@
 			<key>CFBundleURLIconFile</key>
 			<string></string>
 			<key>CFBundleURLName</key>
-			<string>io.blaise.acelink</string>
+			<string>io.github.airmakz.acelinkui</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>acestream</string>
@@ -38,7 +38,7 @@
 			<key>CFBundleURLIconFile</key>
 			<string></string>
 			<key>CFBundleURLName</key>
-			<string>io.blaise.acelink</string>
+			<string>io.github.airmakz.acelinkui</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>magnet</string>
@@ -56,7 +56,7 @@
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Ace Link shares your channels with TVs on your network and shows which device is watching each one.</string>
+	<string>AceLinkUI shares your channels with TVs on your network and shows which device is watching each one.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_airplay._tcp</string>

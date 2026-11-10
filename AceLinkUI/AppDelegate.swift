@@ -55,13 +55,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// while one is still loading cancels the previous one.
     private var generation = 0
 
-    /// Only one Ace Link may run. Copies share the single engine container but each starts
+    /// Only one AceLinkUI may run. Copies share the single engine container but each starts
     /// it with its own token, so each sees the other's engine as foreign and recreates it
     /// (every 30 s while sharing to the TV), killing every stream and check. A second copy
     /// (e.g. the Xcode build next to the installed one) brings the first one forward and quits.
     func applicationWillFinishLaunching(_: Notification) {
         guard let older = Self.olderRunningCopy() else { return }
-        os_log("Ace Link is already running (pid %d); switching to it.", older.processIdentifier)
+        os_log("AceLinkUI is already running (pid %d); switching to it.", older.processIdentifier)
         guard let url = older.bundleURL else { exit(0) }
         olderCopyURL = url
         let config = NSWorkspace.OpenConfiguration()
@@ -75,7 +75,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Another running Ace Link that started before this one. The older one wins, so two
+    /// Another running AceLinkUI that started before this one. The older one wins, so two
     /// copies launched at the same moment don't both quit.
     private static func olderRunningCopy() -> NSRunningApplication? {
         let me = NSRunningApplication.current
@@ -122,7 +122,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = AppMainMenu.build(target: self)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem?.menu = MainMenu(title: "Ace Link")
+        statusItem?.menu = MainMenu(title: "AceLinkUI")
 
         if let statusItemButton = statusItem?.button {
             loading.statusItemButton = statusItemButton
@@ -347,7 +347,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// True when *our* engine answers: the page only loads with the token it was started with,
-    /// so an engine replaced by something else (e.g. another Ace Link copy) is detected.
+    /// so an engine replaced by something else (e.g. another AceLinkUI copy) is detected.
     private static func engineResponds(token: String) -> Bool {
         let url = AppConstants.Docker.baseURL.appendingPathComponent("/webui/app/\(token)/server")
         var ok = false
@@ -864,7 +864,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Closes the player windows Ace Link opened.
+    /// Closes the player windows AceLinkUI opened.
     /// Pass `keepingSessionOf` when the same stream is about to play again: it reuses
     /// the session (same player id and stream), so ending it would cut the new playback.
     func terminatePlayers(keepingSessionOf keptHash: String? = nil) {
@@ -917,7 +917,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Rebuilds what plays where, for the link rows and the Now Playing bar: the players
-    /// Ace Link opened on this Mac and, while sharing, every device reading the relay.
+    /// AceLinkUI opened on this Mac and, while sharing, every device reading the relay.
     private func refreshNowPlaying() {
         var viewers: [String: [Viewer]] = [:]
         var names: [String: String] = [:]

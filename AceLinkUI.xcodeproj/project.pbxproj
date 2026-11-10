@@ -77,11 +77,11 @@
 		4D867EEA2761340800EC726E /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		4D9442712722EAA800D11C91 /* SelectPlayerMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectPlayerMenu.swift; sourceTree = "<group>"; };
 		4D94427527259F4D00D11C91 /* StreamFile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamFile.swift; sourceTree = "<group>"; };
-		4DB4E66B2108FA7200C2F1F2 /* Ace Link.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Ace Link.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		4DB4E66B2108FA7200C2F1F2 /* AceLinkUI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AceLinkUI.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4DB4E66E2108FA7200C2F1F2 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		4DB4E6722108FA7300C2F1F2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4DB4E6772108FA7300C2F1F2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		4DB4E6782108FA7300C2F1F2 /* Ace_Link.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Ace_Link.entitlements; sourceTree = "<group>"; };
+		4DB4E6782108FA7300C2F1F2 /* AceLinkUI.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AceLinkUI.entitlements; sourceTree = "<group>"; };
 		4DCF492826BFF70000A54904 /* HistoryMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryMenu.swift; sourceTree = "<group>"; };
 		4DE97F2D26A45F6B00432554 /* player.html */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.html; path = player.html; sourceTree = SOURCE_ROOT; };
 		4DE97F2F26A4652900432554 /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = SOURCE_ROOT; };
@@ -153,7 +153,7 @@
 		4DB4E6622108FA7100C2F1F2 = {
 			isa = PBXGroup;
 			children = (
-				4DB4E66D2108FA7200C2F1F2 /* Ace Link */,
+				4DB4E66D2108FA7200C2F1F2 /* AceLinkUI */,
 				4DB4E66C2108FA7200C2F1F2 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -161,12 +161,12 @@
 		4DB4E66C2108FA7200C2F1F2 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				4DB4E66B2108FA7200C2F1F2 /* Ace Link.app */,
+				4DB4E66B2108FA7200C2F1F2 /* AceLinkUI.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		4DB4E66D2108FA7200C2F1F2 /* Ace Link */ = {
+		4DB4E66D2108FA7200C2F1F2 /* AceLinkUI */ = {
 			isa = PBXGroup;
 			children = (
 				5A0953F028F6E448B8115DE9 /* Channels */,
@@ -182,7 +182,7 @@
 				4D94427527259F4D00D11C91 /* StreamFile.swift */,
 				AD5A8D8C4E325373F824A049 /* .swiftformat */,
 				AD5A8225D690C3597305286E /* .swiftlint.yml */,
-				4DB4E6782108FA7300C2F1F2 /* Ace_Link.entitlements */,
+				4DB4E6782108FA7300C2F1F2 /* AceLinkUI.entitlements */,
 				AD5A8FCB503ABA8B866D285D /* acelink.png */,
 				AD5A89B00E3E4D0ED1B81DED /* acestream.conf */,
 				4DB4E6722108FA7300C2F1F2 /* Assets.xcassets */,
@@ -194,7 +194,7 @@
 				4DE97F2F26A4652900432554 /* README.md */,
 				4D0CFED72427B04000264B83 /* VERSION */,
 			);
-			path = "Ace Link";
+			path = AceLinkUI;
 			sourceTree = "<group>";
 		};
 		5A0953F028F6E448B8115DE9 /* Channels */ = {
@@ -251,9 +251,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		4DB4E66A2108FA7200C2F1F2 /* Ace Link */ = {
+		4DB4E66A2108FA7200C2F1F2 /* AceLinkUI */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 4DB4E67B2108FA7300C2F1F2 /* Build configuration list for PBXNativeTarget "Ace Link" */;
+			buildConfigurationList = 4DB4E67B2108FA7300C2F1F2 /* Build configuration list for PBXNativeTarget "AceLinkUI" */;
 			buildPhases = (
 				4DB4E6672108FA7200C2F1F2 /* Sources */,
 				4DB4E6682108FA7200C2F1F2 /* Frameworks */,
@@ -264,9 +264,9 @@
 			);
 			dependencies = (
 			);
-			name = "Ace Link";
-			productName = "Ace Link";
-			productReference = 4DB4E66B2108FA7200C2F1F2 /* Ace Link.app */;
+			name = AceLinkUI;
+			productName = AceLinkUI;
+			productReference = 4DB4E66B2108FA7200C2F1F2 /* AceLinkUI.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -278,7 +278,7 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastSwiftUpdateCheck = 0940;
 				LastUpgradeCheck = 2720;
-				ORGANIZATIONNAME = blaise.io;
+				ORGANIZATIONNAME = AirmakZ;
 				TargetAttributes = {
 					4DB4E66A2108FA7200C2F1F2 = {
 						CreatedOnToolsVersion = 9.4.1;
@@ -286,7 +286,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 4DB4E6662108FA7100C2F1F2 /* Build configuration list for PBXProject "Ace Link" */;
+			buildConfigurationList = 4DB4E6662108FA7100C2F1F2 /* Build configuration list for PBXProject "AceLinkUI" */;
 			compatibilityVersion = "Xcode 9.3";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -299,7 +299,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				4DB4E66A2108FA7200C2F1F2 /* Ace Link */,
+				4DB4E66A2108FA7200C2F1F2 /* AceLinkUI */,
 			);
 		};
 /* End PBXProject section */
@@ -523,21 +523,21 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = "Ace Link/Ace_Link.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "AceLinkUI/AceLinkUI.entitlements";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
-				INFOPLIST_FILE = "Ace Link/Info.plist";
+				INFOPLIST_FILE = "AceLinkUI/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
 				MARKETING_VERSION = "";
-				PRODUCT_BUNDLE_IDENTIFIER = io.blaise.acelink;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.airmakz.acelinkui;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 5.0;
@@ -548,21 +548,21 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = "Ace Link/Ace_Link.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "AceLinkUI/AceLinkUI.entitlements";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
-				INFOPLIST_FILE = "Ace Link/Info.plist";
+				INFOPLIST_FILE = "AceLinkUI/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
 				MARKETING_VERSION = "";
-				PRODUCT_BUNDLE_IDENTIFIER = io.blaise.acelink;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.airmakz.acelinkui;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 5.0;
@@ -572,7 +572,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		4DB4E6662108FA7100C2F1F2 /* Build configuration list for PBXProject "Ace Link" */ = {
+		4DB4E6662108FA7100C2F1F2 /* Build configuration list for PBXProject "AceLinkUI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				4DB4E6792108FA7300C2F1F2 /* Debug */,
@@ -581,7 +581,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		4DB4E67B2108FA7300C2F1F2 /* Build configuration list for PBXNativeTarget "Ace Link" */ = {
+		4DB4E67B2108FA7300C2F1F2 /* Build configuration list for PBXNativeTarget "AceLinkUI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				4DB4E67C2108FA7300C2F1F2 /* Debug */,

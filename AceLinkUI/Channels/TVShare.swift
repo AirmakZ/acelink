@@ -204,7 +204,7 @@ final class TVShare: ObservableObject {
     /// A segment in a stream's history, numbered for players. Numbers keep growing across
     /// restarts, so players never see the playlist go back.
     private struct Segment {
-        /// Ace Link's number for it, which players use (segment URLs end in "<sequence>.ts").
+        /// AceLinkUI's number for it, which players use (segment URLs end in "<sequence>.ts").
         let sequence: Int
         let duration: Double
         /// Where the engine serves it. Not unique: a restarted session numbers its segments
@@ -378,7 +378,7 @@ final class TVShare: ObservableObject {
     // still watching (the engine has no API for it, and keeps a session it isn't asked
     // about downloading forever). It also lets a stream survive its session dying. Paths:
     //   /hls/<hash>/index.m3u8          a playlist built from the stream's history
-    //   /hls/<hash>/seg/<sequence>.ts   a segment by Ace Link's number, from the cache (or
+    //   /hls/<hash>/seg/<sequence>.ts   a segment by AceLinkUI's number, from the cache (or
     //                                   the engine, while its session is the current one)
 
     private func proxy(

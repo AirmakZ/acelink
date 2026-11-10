@@ -6,7 +6,7 @@ import ContainerizationOS
 import Foundation
 
 /// Runs the AceStream engine image (linux/amd64) in a Linux VM, through Rosetta.
-/// Everything it downloads lives in ~/Library/Application Support/Ace Link/Engine.
+/// Everything it downloads lives in ~/Library/Application Support/AceLinkUI/Engine.
 final class EngineVM: @unchecked Sendable {
     // The kernel comes from Kata Containers, like Apple's own examples use; the init
     // filesystem must match the Containerization version in Package.swift.
@@ -16,7 +16,7 @@ final class EngineVM: @unchecked Sendable {
     private static let kernelPathInArchive = "opt/kata/share/kata-containers/vmlinux.container"
     private static let initfsReference = "ghcr.io/apple/containerization/vminit:0.54.0"
     private static let amd64 = Platform(arch: "amd64", os: "linux")
-    private static let containerID = "acelink-engine"
+    private static let containerID = "acelinkui-engine"
 
     private let imageReference: String
     private let root: URL
@@ -26,13 +26,13 @@ final class EngineVM: @unchecked Sendable {
     private var parentSource: DispatchSourceProcess?
 
     init(imageReference: String) {
-        // "blaiseio/acelink:2.1.0" → "docker.io/blaiseio/acelink:2.1.0"
+        // "user/image:1.0" → "docker.io/user/image:1.0"; "ghcr.io/…" is kept as is
         let parts = imageReference.split(separator: "/")
         let hasRegistry = parts.count > 1
             && (parts[0].contains(".") || parts[0].contains(":") || parts[0] == "localhost")
         self.imageReference = hasRegistry ? imageReference : "docker.io/" + imageReference
         root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Ace Link/Engine")
+            .appendingPathComponent("AceLinkUI/Engine")
     }
 
     private var kernelPath: URL { root.appendingPathComponent("kernel/vmlinux") }
@@ -177,7 +177,7 @@ final class EngineVM: @unchecked Sendable {
                 // shows up as "Cannot get stream title" (blaise-io/acelink#100).
                 .any(type: "tmpfs", source: "tmpfs", destination: "/dev/disk/by-id",
                      options: ["rw", "noexec", "size=4k"]),
-                // Ace Link writes the players' playlists here; the container serves them.
+                // AceLinkUI writes the players' playlists here; the container serves them.
                 .share(source: share.path, destination: "/acelink"),
             ]
             config.bootLog = .file(path: runDirectory.appendingPathComponent("boot.log"), append: false)
@@ -207,7 +207,7 @@ final class EngineVM: @unchecked Sendable {
         exit(status.exitCode == 0 ? 0 : 1)
     }
 
-    /// Ace Link stops the engine with SIGTERM. If Ace Link crashes or is killed,
+    /// AceLinkUI stops the engine with SIGTERM. If AceLinkUI crashes or is killed,
     /// the engine goes away with it instead of keeping the ports taken.
     private func stopOnSignalsAndParentExit() {
         for sig in [SIGTERM, SIGINT] {

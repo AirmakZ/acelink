@@ -8,7 +8,7 @@ public enum AppConfig: String {
     static var streamsDir: URL {
         FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        )[0].appendingPathComponent("Ace Link/streams")
+        )[0].appendingPathComponent("AceLinkUI/streams")
     }
 
     static var playerBundleIdentifier: String? {

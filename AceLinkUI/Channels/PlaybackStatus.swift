@@ -148,7 +148,7 @@ private struct SessionStats: Decodable {
     }
 }
 
-/// Someone watching a stream: this Mac (in the player Ace Link opened, if it did) or
+/// Someone watching a stream: this Mac (in the player AceLinkUI opened, if it did) or
 /// another device on the network, known by its IP address.
 enum Viewer: Hashable {
     case thisMac(player: String?)
@@ -172,7 +172,7 @@ struct ActiveStream: Identifiable, Equatable {
 
     var id: String { hash }
 
-    /// Plays in a player Ace Link opened on this Mac, so Ace Link can stop it. A TV can
+    /// Plays in a player AceLinkUI opened on this Mac, so AceLinkUI can stop it. A TV can
     /// only be stopped on the TV.
     var playsOnMac: Bool {
         viewers.contains { viewer in

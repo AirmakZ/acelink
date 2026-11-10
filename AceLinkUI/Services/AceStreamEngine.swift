@@ -18,7 +18,10 @@ class AceStreamEngine: Service {
         } else {
             // `rm -f` waits until the old container is gone; `kill` doesn't, and the name
             // would still be taken when the new container starts.
-            _ = Process.runCommand("docker", "rm", "--force", AppConstants.Docker.containerName)
+            _ = Process.runCommand(
+                "docker", "rm", "--force",
+                AppConstants.Docker.containerName, AppConstants.Docker.legacyContainerName
+            )
         }
         super.init()
     }

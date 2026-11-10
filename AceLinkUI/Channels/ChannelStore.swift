@@ -3,7 +3,7 @@ import Foundation
 import os
 
 /// How a channel is drawn in the sidebar.
-enum ChannelIcon: Codable, Equatable {
+enum ChannelIcon: Equatable {
     /// An SF Symbol name with a tint color (hex, e.g. "#FF3B30").
     case symbol(name: String, color: String)
     /// A single emoji.
@@ -12,6 +12,55 @@ enum ChannelIcon: Codable, Equatable {
     case image(fileName: String)
 
     static let `default` = ChannelIcon.symbol(name: "tv", color: "#0A84FF")
+}
+
+/// Saved as `{"symbol": {"name", "color"}}`, `{"emoji": {"text"}}` or
+/// `{"image": {"fileName"}}`. The synthesized coding named the emoji "_0"; files
+/// written that way still read.
+extension ChannelIcon: Codable {
+    private enum CodingKeys: String, CodingKey { case symbol, emoji, image }
+    private enum ValueKeys: String, CodingKey {
+        case name, color, text, fileName
+        case legacy = "_0"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard let key = container.allKeys.first else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath, debugDescription: "No icon case"
+            ))
+        }
+        let values = try container.nestedContainer(keyedBy: ValueKeys.self, forKey: key)
+        switch key {
+        case .symbol:
+            self = .symbol(
+                name: try values.decode(String.self, forKey: .name),
+                color: try values.decode(String.self, forKey: .color)
+            )
+        case .emoji:
+            self = .emoji(try values.decodeIfPresent(String.self, forKey: .text)
+                ?? values.decode(String.self, forKey: .legacy))
+        case .image:
+            self = .image(fileName: try values.decode(String.self, forKey: .fileName))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .symbol(name, color):
+            var values = container.nestedContainer(keyedBy: ValueKeys.self, forKey: .symbol)
+            try values.encode(name, forKey: .name)
+            try values.encode(color, forKey: .color)
+        case let .emoji(text):
+            var values = container.nestedContainer(keyedBy: ValueKeys.self, forKey: .emoji)
+            try values.encode(text, forKey: .text)
+        case let .image(fileName):
+            var values = container.nestedContainer(keyedBy: ValueKeys.self, forKey: .image)
+            try values.encode(fileName, forKey: .fileName)
+        }
+    }
 }
 
 struct StreamLink: Codable, Identifiable, Equatable {
@@ -238,6 +287,98 @@ final class ChannelStore: ObservableObject {
     private func removeUnusedIconFile(_ icon: ChannelIcon, replacedBy newIcon: ChannelIcon?) {
         guard case let .image(fileName) = icon, icon != newIcon else { return }
         try? FileManager.default.removeItem(at: Self.iconsDir.appendingPathComponent(fileName))
+    }
+
+    // MARK: - Export and import
+
+    /// A file with channels, to keep a copy or move them to another Mac. Custom icons
+    /// travel inside it, since they're files of their own here.
+    struct Backup: Codable {
+        static let formatName = "acelink-channels"
+        var format = formatName
+        var version = 1
+        var channels: [Channel]
+        /// PNGs of `.image` icons by file name (base64 in the JSON).
+        var icons: [String: Data] = [:]
+    }
+
+    func exportData() throws -> Data {
+        var icons: [String: Data] = [:]
+        for channel in channels {
+            if case let .image(fileName) = channel.icon,
+               let data = try? Data(contentsOf: Self.iconsDir.appendingPathComponent(fileName)) {
+                icons[fileName] = data
+            }
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(Backup(channels: channels, icons: icons))
+    }
+
+    /// Reads an exported file, or a plain channels.json (without its icons).
+    static func readBackup(_ data: Data) throws -> Backup {
+        if let backup = try? JSONDecoder().decode(Backup.self, from: data),
+           backup.format == Backup.formatName {
+            return backup
+        }
+        return Backup(channels: try JSONDecoder().decode([Channel].self, from: data))
+    }
+
+    /// Adds the file's channels after the current ones, or replaces them. Returns the
+    /// imported channels as stored (added ones get new IDs where they'd clash).
+    @discardableResult
+    func importBackup(_ backup: Backup, replacing: Bool) -> [Channel] {
+        var takenIDs = replacing ? Set<UUID>() : Set(channels.flatMap { [$0.id] + $0.links.map(\.id) })
+        func freshID(_ id: UUID) -> UUID {
+            let id = takenIDs.contains(id) ? UUID() : id
+            takenIDs.insert(id)
+            return id
+        }
+        let imported = backup.channels.map { channel -> Channel in
+            var channel = channel
+            channel.id = freshID(channel.id)
+            channel.links = channel.links.map { link in
+                var link = link
+                link.id = freshID(link.id)
+                return link
+            }
+            channel.icon = importedIcon(channel.icon, from: backup)
+            return channel
+        }
+        channels = replacing ? imported : channels + imported
+        // The icons directory belongs to the saved channels, not the in-memory remote list.
+        if replacing, fileURL != nil { removeUnreferencedIconFiles() }
+        return imported
+    }
+
+    /// Saves a backup's icon under a new file name; the default icon if it isn't there.
+    private func importedIcon(_ icon: ChannelIcon, from backup: Backup) -> ChannelIcon {
+        guard case let .image(fileName) = icon else { return icon }
+        guard let data = backup.icons[fileName] else {
+            // A plain channels.json from this Mac still finds its icons.
+            let local = Self.iconsDir.appendingPathComponent(fileName)
+            return FileManager.default.fileExists(atPath: local.path) ? icon : .default
+        }
+        let newName = "\(UUID().uuidString).png"
+        do {
+            try FileManager.default.createDirectory(at: Self.iconsDir, withIntermediateDirectories: true)
+            try data.write(to: Self.iconsDir.appendingPathComponent(newName))
+            return .image(fileName: newName)
+        } catch {
+            os_log("Cannot save imported icon: %{public}@", error.localizedDescription)
+            return .default
+        }
+    }
+
+    private func removeUnreferencedIconFiles() {
+        var used = Set<String>()
+        for channel in channels {
+            if case let .image(fileName) = channel.icon { used.insert(fileName) }
+        }
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: Self.iconsDir.path)) ?? []
+        for file in files where !used.contains(file) {
+            try? FileManager.default.removeItem(at: Self.iconsDir.appendingPathComponent(file))
+        }
     }
 
     // MARK: - Persistence

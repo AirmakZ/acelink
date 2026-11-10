@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The link being added or edited, together with the channel it belongs to.
 struct LinkEditTarget: Identifiable {
@@ -171,19 +172,40 @@ final class ChannelsUIState: ObservableObject {
     @Published var bulkAdd: BulkAddTarget?
     @Published var channelPendingDelete: Channel?
     @Published var showTVPanel = false
-    @Published var editingRemoteURL = false
+    @Published var showSettings = false
+    /// Settings were opened by picking Remote without an address: switch once one is saved.
+    @Published var switchToRemoteOnURL = false
     /// The channel a link drag is hovering over in the sidebar.
     @Published var dropTarget: UUID?
 }
 
-/// Local/Remote selector in the sidebar's part of the toolbar. The Remote segment shows a red warning when
-/// the remote list could not be updated (the saved copy is shown meanwhile).
+/// Local/Remote selector in the sidebar's part of the toolbar. The Remote segment shows a
+/// red warning when the remote list could not be updated (the saved copy is shown
+/// meanwhile). Without a remote address, picking Remote stays on Local and asks for one.
 struct SourcePicker: View {
     @ObservedObject var remote = RemoteList.shared
     @AppStorage("showRemoteList") private var showRemote = false
+    /// Remote was picked but there's no address to load it from.
+    var onMissingURL: () -> Void = {}
+    /// Bumped to redraw the control when a pick is refused, so it doesn't stay on Remote.
+    @State private var refusals = 0
+
+    private var selection: Binding<Bool> {
+        Binding(
+            get: { showRemote },
+            set: { remoteWanted in
+                if remoteWanted, remote.url == nil {
+                    refusals += 1
+                    onMissingURL()
+                } else {
+                    showRemote = remoteWanted
+                }
+            }
+        )
+    }
 
     var body: some View {
-        Picker("Source", selection: $showRemote) {
+        Picker("Source", selection: selection) {
             Label("Local", systemImage: "internaldrive")
                 .labelStyle(.iconOnly)
                 .help("Your own channels")
@@ -199,47 +221,10 @@ struct SourcePicker: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+        .id(refusals)
     }
 }
 
-/// Asks for the address of the remote m3u list.
-struct RemoteURLEditor: View {
-    let initial: String
-    let onSave: (String) -> Void
-    let onCancel: () -> Void
-
-    @State private var text = ""
-
-    private var isValid: Bool {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || RemoteList.validURL(text) != nil
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Remote m3u URL").font(.headline)
-            TextField("https://…/list.m3u", text: $text)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 380)
-                .onSubmit { if isValid { onSave(text) } }
-            Text("An http(s) address of an m3u playlist. Channels are grouped by group-title.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            HStack {
-                Spacer()
-                Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
-                Button("Save") { onSave(text) }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!isValid)
-            }
-        }
-        .padding(20)
-        .onAppear { text = initial }
-    }
-}
-
-/// The toolbar shows the channel instead of "Ace Link"; the window keeps its title for
-/// the Window menu. Removed through SwiftUI, which then lays out the rest of the toolbar.
 /// The sidebar pane of the window's NSSplitView, which NavigationSplitView manages.
 enum SplitSidebar {
     /// Shows or hides the pane right away. SwiftUI animates it from the window's edge
@@ -300,6 +285,8 @@ private struct OwnSidebarToggle: ViewModifier {
     }
 }
 
+/// The toolbar shows the channel instead of "Ace Link"; the window keeps its title for
+/// the Window menu. Removed through SwiftUI, which then lays out the rest of the toolbar.
 private struct HiddenWindowTitle: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 15, *) {
@@ -342,7 +329,12 @@ struct ChannelsView: View {
                     if !iconsOnly {
                         // First, so it stays put when the sidebar shrinks to icons.
                         ToolbarItem { sidebarToggle }
-                        ToolbarItem { SourcePicker() }
+                        ToolbarItem {
+                            SourcePicker(onMissingURL: {
+                                ui.switchToRemoteOnURL = true
+                                ui.showSettings = true
+                            })
+                        }
                     }
                 }
                 .modifier(OwnSidebarToggle())
@@ -364,16 +356,6 @@ struct ChannelsView: View {
                 detail
             }
             .overlay(alignment: .top) { TitleBarBand() }
-        }
-        .sheet(isPresented: $ui.editingRemoteURL) {
-            RemoteURLEditor(
-                initial: remote.urlString,
-                onSave: { text in
-                    remote.setURL(text)
-                    ui.editingRemoteURL = false
-                },
-                onCancel: { ui.editingRemoteURL = false }
-            )
         }
         .sheet(item: $ui.editingChannel) { channel in
             ChannelEditor(
@@ -427,6 +409,15 @@ struct ChannelsView: View {
         }
         .onAppear {
             if ui.selection == nil { ui.selection = current.channels.first?.id }
+        }
+        .onChange(of: remote.urlString) { _ in
+            guard ui.switchToRemoteOnURL, remote.url != nil else { return }
+            ui.switchToRemoteOnURL = false
+            ui.showSettings = false
+            showRemote = true
+        }
+        .onChange(of: ui.showSettings) { shown in
+            if !shown { ui.switchToRemoteOnURL = false }
         }
         .onChange(of: showRemote) { _ in
             ui.selection = current.channels.first?.id
@@ -498,6 +489,95 @@ struct ChannelsView: View {
                 }
                 .help("Play the AceStream link currently on your clipboard")
             }
+            if #available(macOS 26, *) { ToolbarSpacer(.fixed, placement: .primaryAction) }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    ui.showSettings.toggle()
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .help("Remote list address, and exporting or importing your channels")
+                .popover(isPresented: $ui.showSettings, arrowEdge: .bottom) {
+                    SettingsPanel(onExport: exportChannels, onImport: importChannels)
+                }
+            }
+        }
+    }
+
+    // MARK: Export and import
+
+    /// Saves your channels to a file of your choice.
+    private func exportChannels() {
+        ui.showSettings = false
+        // After the popover has closed, so the panel doesn't open behind it.
+        DispatchQueue.main.async {
+            let panel = NSSavePanel()
+            // Otherwise it opens wherever the last panel was (even /Applications).
+            panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            panel.allowedContentTypes = [.json]
+            panel.nameFieldStringValue = "Ace Link Channels.json"
+            panel.begin { response in
+                guard response == .OK, let url = panel.url else { return }
+                do {
+                    try store.exportData().write(to: url, options: .atomic)
+                } catch {
+                    NSAlert.error("Could not export the channels: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// Reads a file of channels and adds them to yours or replaces yours, as you choose.
+    private func importChannels() {
+        ui.showSettings = false
+        DispatchQueue.main.async {
+            let panel = NSOpenPanel()
+            // Where an exported file, or one sent from another Mac, usually is.
+            panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            panel.allowedContentTypes = [.json]
+            panel.allowsMultipleSelection = false
+            panel.begin { response in
+                guard response == .OK, let url = panel.url else { return }
+                let backup: ChannelStore.Backup
+                do {
+                    backup = try ChannelStore.readBackup(Data(contentsOf: url))
+                } catch {
+                    NSAlert.warning(
+                        messageText: "Can't import this file",
+                        informativeText: "It isn't a list of channels exported from Ace Link."
+                    )
+                    return
+                }
+                guard !backup.channels.isEmpty else {
+                    NSAlert.warning(messageText: "Nothing to import",
+                                    informativeText: "The file has no channels.")
+                    return
+                }
+                guard let replacing = askHowToImport(backup) else { return }
+                let imported = store.importBackup(backup, replacing: replacing)
+                showRemote = false
+                ui.selection = imported.first?.id
+            }
+        }
+    }
+
+    /// Add or replace; nil if cancelled. Doesn't ask when there's nothing to replace.
+    private func askHowToImport(_ backup: ChannelStore.Backup) -> Bool? {
+        if store.channels.isEmpty { return false }
+        let count = backup.channels.count
+        let current = store.channels.count
+        let alert = NSAlert()
+        alert.messageText = "Import \(count) channel\(count == 1 ? "" : "s")?"
+        alert.informativeText = "Add them after your \(current) channel\(current == 1 ? "" : "s"), " +
+            "or replace yours with them. Replacing can't be undone."
+        alert.addButton(withTitle: "Add")
+        let replace = alert.addButton(withTitle: "Replace")
+        replace.hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return false
+        case .alertSecondButtonReturn: return true
+        default: return nil
         }
     }
 
@@ -620,21 +700,14 @@ struct ChannelsView: View {
                 .buttonStyle(.borderless)
             }
             Spacer(minLength: 0)
-            // Same spot for both: refresh on the remote list, its address when local.
-            Group {
-                if showRemote {
-                    Button(action: remote.refresh) { Image(systemName: "arrow.clockwise") }
-                        .disabled(remote.state == .loading || remote.url == nil)
-                        .help("Update the remote list")
-                } else {
-                    Button { ui.editingRemoteURL = true } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .help("Remote m3u URL")
-                }
+            // The address itself is set in the toolbar's settings.
+            if showRemote {
+                Button(action: remote.refresh) { Image(systemName: "arrow.clockwise") }
+                    .disabled(remote.state == .loading || remote.url == nil)
+                    .help("Update the remote list")
+                    .buttonStyle(.borderless)
+                    .frame(width: 16)
             }
-            .buttonStyle(.borderless)
-            .frame(width: 16)
         }
         .padding(.horizontal, 10)
     }

@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-enum Availability: Equatable, Codable {
+enum Availability: Equatable {
     /// Being tested right now.
     case checking
     /// Waiting in the check's queue for its turn.
@@ -28,6 +28,60 @@ enum Availability: Equatable, Codable {
         case .slow: return 1
         case .checking, .queued: return 2
         case .noVideo, .unavailable: return 3
+        }
+    }
+}
+
+/// Saved as `{"available": {"kbps": 817}}`, `{"unavailable": {}}`… The synthesized
+/// coding named the rate "_0"; files written that way still read.
+extension Availability: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case checking, queued, available, slow, noVideo, unavailable
+    }
+
+    private enum RateKeys: String, CodingKey {
+        case kbps
+        case legacy = "_0"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard let key = container.allKeys.first else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath, debugDescription: "No availability case"
+            ))
+        }
+        func rate() throws -> Int {
+            let rate = try container.nestedContainer(keyedBy: RateKeys.self, forKey: key)
+            return try rate.decodeIfPresent(Int.self, forKey: .kbps)
+                ?? rate.decode(Int.self, forKey: .legacy)
+        }
+        switch key {
+        case .checking: self = .checking
+        case .queued: self = .queued
+        case .available: self = .available(try rate())
+        case .slow: self = .slow(try rate())
+        case .noVideo: self = .noVideo
+        case .unavailable: self = .unavailable
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        func encodeRate(_ kbps: Int, as key: CodingKeys) throws {
+            var rate = container.nestedContainer(keyedBy: RateKeys.self, forKey: key)
+            try rate.encode(kbps, forKey: .kbps)
+        }
+        func encodeEmpty(as key: CodingKeys) {
+            _ = container.nestedContainer(keyedBy: RateKeys.self, forKey: key)
+        }
+        switch self {
+        case .checking: encodeEmpty(as: .checking)
+        case .queued: encodeEmpty(as: .queued)
+        case let .available(kbps): try encodeRate(kbps, as: .available)
+        case let .slow(kbps): try encodeRate(kbps, as: .slow)
+        case .noVideo: encodeEmpty(as: .noVideo)
+        case .unavailable: encodeEmpty(as: .unavailable)
         }
     }
 }

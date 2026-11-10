@@ -4,14 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-AceLinkUI (formerly a fork of Ace Link, renamed 2026-11-10) is a macOS menu bar app (AppKit + SwiftUI, macOS 13+) that plays AceStream/magnet links in an external media player (VLC by default). The AceStream engine runs in a Docker container (`ghcr.io/airmakz/acelinkui:<VERSION>`, linux/amd64 only). This fork adds a Channels window (organize links, availability checks, "Play Alongside", "Share to TV").
+AceLinkUI is a macOS menu bar app (AppKit + SwiftUI, macOS 13+) that plays AceStream/magnet links in an external media player (VLC by default), with a Channels window (organize links, remote list, availability checks, "Play Alongside", "Share to TV"). The AceStream engine (`ghcr.io/airmakz/acelinkui:<AceStream version>`, linux/amd64 only) runs in a Linux VM on Apple silicon with macOS 26, otherwise in Docker.
+
+It was renamed from Ace Link on 2026-11-10 and is its own project now. It builds on [Ace Link](https://github.com/blaise-io/acelink) by Blaise Kal (the menu bar app, engine pipeline and image) and [e-ayguade/acelink](https://github.com/e-ayguade/acelink) by Enric Ayguadé (the Channels window concept it was forked from). Both are MIT: keep their copyright in `LICENSE` and the Credits section of the README.
 
 ## Commands
 
 - **Build (Xcode project):** `xcodebuild -scheme AceLinkUI build` (or the Xcode `BuildProject` tool)
 - **Build without Xcode:** `scripts/build-app.sh` → `build/AceLinkUI.app`; `--install` also copies to `/Applications`. It compiles every `*.swift` under `AceLinkUI/` with `swiftc` directly, so it doesn't need new files added to the project. The Xcode project does not use synchronized groups, so new files must also be added to `project.pbxproj`.
 - **Docker image:** `make docker` (builds from root `Dockerfile`, with `acestream.conf` and `player.html` copied in)
-- **Release:** `make build` (stamps `VERSION` into README/Info.plist and archives), `make release` (DMG), `make tag`
+- **Release:** `make build` (stamps `VERSION` into Info.plist and archives), `make release` (DMG), `make tag`
 - **Lint/format:** configs are in `AceLinkUI/.swiftlint.yml` and `AceLinkUI/.swiftformat` (max width 100). They aren't wired into the build; run `swiftlint` / `swiftformat` manually if installed.
 - **Tests:** there is no test target.
 - **Logs:** `os_log` output; filter Console.app with `Process: AceLinkUI`, or read the Xcode console. `nw_path_necp_check_for_updates Failed to copy updated result (22)` is harmless system noise.

@@ -11,7 +11,6 @@ docker:
 
 build:
 	# Create a build
-	sed -i '' 's/[0-9]\.[0-9]\.[0-9]/$(VERSION)/g' README.md
 	agvtool new-marketing-version $(VERSION)
 	xcodebuild -scheme AceLinkUI archive -archivePath $(ARCHIVEDIR)
 

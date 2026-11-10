@@ -285,7 +285,7 @@ private struct OwnSidebarToggle: ViewModifier {
     }
 }
 
-/// The toolbar shows the channel instead of "Ace Link"; the window keeps its title for
+/// The toolbar shows the channel instead of "AceLinkUI"; the window keeps its title for
 /// the Window menu. Removed through SwiftUI, which then lays out the rest of the toolbar.
 private struct HiddenWindowTitle: ViewModifier {
     func body(content: Content) -> some View {
@@ -515,7 +515,7 @@ struct ChannelsView: View {
             // Otherwise it opens wherever the last panel was (even /Applications).
             panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
             panel.allowedContentTypes = [.json]
-            panel.nameFieldStringValue = "Ace Link Channels.json"
+            panel.nameFieldStringValue = "AceLinkUI Channels.json"
             panel.begin { response in
                 guard response == .OK, let url = panel.url else { return }
                 do {
@@ -544,7 +544,7 @@ struct ChannelsView: View {
                 } catch {
                     NSAlert.warning(
                         messageText: "Can't import this file",
-                        informativeText: "It isn't a list of channels exported from Ace Link."
+                        informativeText: "It isn't a list of channels exported from AceLinkUI."
                     )
                     return
                 }

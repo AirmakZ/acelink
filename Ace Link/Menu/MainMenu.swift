@@ -63,7 +63,7 @@ class MainMenu: NSMenu {
 
     override func update() {
         shareToTVItem.state = TVShare.shared.isEnabled ? .on : .off
-        let canPlay = Process.runCommand("docker", "--version").terminationStatus == 0
+        let canPlay = EngineRuntime.isAvailable
         for menu in partialMenus {
             menu.update(canPlay: canPlay)
         }

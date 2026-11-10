@@ -41,6 +41,10 @@ extension Process {
     }
 
     static func runCommand(_ arguments: String...) -> Self {
+        runCommand(arguments)
+    }
+
+    static func runCommand(_ arguments: [String]) -> Self {
         let process = Self()
 
         process.launchPath = "/usr/bin/env"

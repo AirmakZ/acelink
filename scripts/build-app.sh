@@ -50,6 +50,9 @@ done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 rm -rf "$ICONSET"
 
+# Runs the engine in a VM on macOS 26 instead of Docker (see EngineHelper/).
+"$ROOT/scripts/build-engine-helper.sh" "$APP/Contents/MacOS"
+
 echo "Signing (ad-hoc)…"
 codesign --force --sign - --entitlements "$SRC/Ace_Link.entitlements" "$APP"
 

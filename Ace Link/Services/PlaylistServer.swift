@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // QuickTime and Safari cannot play streams when loaded from a m3u8 file from the local filesystem.
 class PlaylistServer: Service {
@@ -13,6 +14,16 @@ class PlaylistServer: Service {
     }
 
     override func run() {
+        if EngineRuntime.usesVM {
+            // The folder is shared with the VM, which already serves it.
+            let file = EngineRuntime.playlistDirectory.appendingPathComponent(stream.playlistFileName)
+            do {
+                try (stream.m3uData + "\n").write(to: file, atomically: true, encoding: .utf8)
+            } catch {
+                os_log("Cannot write the playlist: %{public}@", error.localizedDescription)
+            }
+            return
+        }
         // The playlist goes in through an environment variable, so quotes in the title
         // can't break the shell command. The web server is started once per engine;
         // when it already runs, the second one exits and the file is still served.

@@ -18,3 +18,7 @@ builds
 # Backup files
 *~.nib
 build/
+
+# SwiftPM
+.build/
+.swiftpm/

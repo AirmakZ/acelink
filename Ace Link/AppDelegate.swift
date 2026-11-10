@@ -162,7 +162,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
             return
         }
-        if Process.runCommand("docker", "--version").terminationStatus != 0 {
+        if !EngineRuntime.isAvailable {
             return
         }
         if let url = urls.first, let stream = ExtractStream.from(applicationURL: url) {
@@ -308,7 +308,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func keepEngineRunningForTV() {
         guard tv.isEnabled, engineWaiters.isEmpty else { return }
-        if Process.runCommand("docker", "--version").terminationStatus != 0 {
+        if !EngineRuntime.isAvailable {
             tv.set(.failed("Docker is not installed."))
             return
         }
@@ -368,10 +368,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if case .starting = tv.state { tv.set(.starting(message)) }
             if case .working = status.state { status.set(.working(message)) }
         }
-        progress("Starting Docker…")
+        progress(EngineRuntime.startingMessage)
         DockerEngine().task { error in
             if let message = error?.errorDescription { return done(message) }
-            progress("Preparing AceStream image (first run can take a while)…")
+            progress(EngineRuntime.preparingMessage)
             DockerImage().task { error in
                 if let message = error?.errorDescription { return done(message) }
                 progress("Starting AceStream engine…")
@@ -397,7 +397,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard !channel.links.isEmpty else { return }
 
-        if Process.runCommand("docker", "--version").terminationStatus != 0 {
+        if !EngineRuntime.isAvailable {
             fail("Docker is not installed. Install Docker Desktop from the menu bar icon.",
                  generation: generation)
             return
@@ -493,12 +493,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startEngineForCheck(_ done: @escaping (String?) -> Void) {
-        status.set(.working("Starting Docker…"))
+        status.set(.working(EngineRuntime.startingMessage))
         DockerEngine().task { error in
             guard self.checker.isRunning else { return }
             if let message = error?.errorDescription { return done(message) }
 
-            self.status.set(.working("Preparing AceStream image (first run can take a while)…"))
+            self.status.set(.working(EngineRuntime.preparingMessage))
             DockerImage().task { error in
                 guard self.checker.isRunning else { return }
                 if let message = error?.errorDescription { return done(message) }
@@ -523,7 +523,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         _ stream: StreamFile, linkID: UUID? = nil, displayName: String? = nil,
         alongside: Bool = false
     ) {
-        if Process.runCommand("docker", "--version").terminationStatus != 0 {
+        if !EngineRuntime.isAvailable {
             fail("Docker is not installed. Install Docker Desktop from the menu bar icon.",
                  generation: generation)
             return
@@ -801,7 +801,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         os_log("Starting Docker…")
-        status.set(.working("Starting Docker…"))
+        status.set(.working(EngineRuntime.startingMessage))
         DockerEngine().task { error in
             guard generation == self.generation else { return }
             if let message = error?.errorDescription {
@@ -810,7 +810,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             os_log("Pulling Docker image…")
-            self.status.set(.working("Preparing AceStream image (first run can take a while)…"))
+            self.status.set(.working(EngineRuntime.preparingMessage))
             DockerImage().task { error in
                 guard generation == self.generation else { return }
                 if let message = error?.errorDescription {
@@ -993,6 +993,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func stopAceStreamServer() {
         os_log("Stopping AceStream server…")
-        _ = Process.runCommand("docker", "kill", AppConstants.Docker.containerName)
+        if EngineRuntime.usesVM {
+            EngineRuntime.stopVM()
+        } else {
+            _ = Process.runCommand("docker", "kill", AppConstants.Docker.containerName)
+        }
     }
 }

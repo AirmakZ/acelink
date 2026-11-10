@@ -28,7 +28,8 @@ final class EngineVM: @unchecked Sendable {
     init(imageReference: String) {
         // "blaiseio/acelink:2.1.0" → "docker.io/blaiseio/acelink:2.1.0"
         let parts = imageReference.split(separator: "/")
-        let hasRegistry = parts.count > 1 && parts[0].contains(".")
+        let hasRegistry = parts.count > 1
+            && (parts[0].contains(".") || parts[0].contains(":") || parts[0] == "localhost")
         self.imageReference = hasRegistry ? imageReference : "docker.io/" + imageReference
         root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Ace Link/Engine")
@@ -95,7 +96,9 @@ final class EngineVM: @unchecked Sendable {
             return image
         }
         print("Downloading \(imageReference)…")
-        return try await store.pull(reference: imageReference, platform: Self.amd64)
+        // A registry on this Mac (for testing images) has no TLS.
+        let local = imageReference.hasPrefix("localhost") || imageReference.hasPrefix("127.0.0.1")
+        return try await store.pull(reference: imageReference, platform: Self.amd64, insecure: local)
     }
 
     /// The image's root filesystem, unpacked once per image version. Each run uses a

@@ -3,8 +3,8 @@ FROM --platform=linux/amd64 ubuntu:focal
 
 ENV LC_ALL="C.UTF-8" \
     LANG="C.UTF-8" \
-    DOWNLOAD_URL="https://download.acestream.media/linux/acestream_3.2.3_ubuntu_18.04_x86_64_py3.8.tar.gz" \
-    CHECKSUM="bf45376f1f28aaff7d9849ff991bf34a6b9a65542460a2344a8826126c33727d"
+    DOWNLOAD_URL="https://download.acestream.media/linux/acestream_3.2.11_ubuntu_18.04_x86_64_py3.8.tar.gz" \
+    CHECKSUM="363b9c45ec062a36bd73170c0c4927e582a532eee6e4884ab646b5d0d6e31ecf"
 
 # Install system packages.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked\

@@ -4,7 +4,7 @@ name: Build and push ghcr.io/airmakz/acelinkui
 # Dockerfile), not the app's version, so it only changes when the engine does.
 on:
   push:
-    branches: [master, acelinkui]
+    branches: [master]
   workflow_dispatch:
 
 permissions:

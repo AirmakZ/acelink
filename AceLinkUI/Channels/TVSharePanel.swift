@@ -13,9 +13,10 @@ struct TVSharePanel: View {
             }
             .toggleStyle(.switch)
 
-            Text("Keeps the AceStream engine running and serves all your channels as a " +
-                "playlist on your home network. Add the address below once in an IPTV app " +
-                "on your TV (e.g. m3u-ip.tv).")
+            Text("Keeps the AceStream engine running and serves all your channels, and the " +
+                "remote list's (starting with \"\(TVShare.remotePrefix)\"), as a playlist on " +
+                "your home network. Add the address below once in an IPTV app on your TV " +
+                "(e.g. m3u-ip.tv).")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -54,10 +55,7 @@ struct TVSharePanel: View {
         .frame(width: 420)
     }
 
-    private var hiddenCount: Int {
-        let dead = TVShare.deadLinkIDs()
-        return store.channels.reduce(0) { $0 + $1.links.filter { dead.contains($0.id) }.count }
-    }
+    private var hiddenCount: Int { TVShare.deadLinkIDs().count }
 
     private var hideDeadLinksToggle: some View {
         VStack(alignment: .leading, spacing: 2) {

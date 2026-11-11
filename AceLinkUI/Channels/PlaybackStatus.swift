@@ -155,6 +155,16 @@ enum Viewer: Hashable {
     case device(address: String)
 }
 
+/// Which channel list a stream comes from: your own channels or the remote list.
+enum ChannelSource: Equatable {
+    case local
+    case remote
+
+    /// The symbol of the sidebar's Local/Remote selector.
+    var systemImage: String { self == .local ? "internaldrive" : "globe" }
+    var help: String { self == .local ? "From your channels" : "From the remote list" }
+}
+
 /// A stream being watched somewhere, for the link rows and the Now Playing bar.
 struct ActiveStream: Identifiable, Equatable {
     /// Lowercased stream hash.
@@ -163,6 +173,8 @@ struct ActiveStream: Identifiable, Equatable {
     let channelID: UUID?
     let channelName: String?
     let channelIcon: ChannelIcon?
+    /// Nil when it's in neither list (opened from a link or the history).
+    let source: ChannelSource?
     let viewers: [Viewer]
     /// What's happening while it connects ("Waiting for peers…", "Connecting… 8 s"); nil
     /// once it plays.

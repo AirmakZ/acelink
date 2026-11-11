@@ -956,8 +956,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         var openingHash: String?
+        let local = ChannelStore.shared.channels
+        let remote = RemoteList.shared.store.channels
         if case let .working(message) = status.state, let linkID = status.activeLinkID,
-           let hash = ChannelStore.shared.channels.lazy.flatMap(\.links)
+           let hash = (local + remote).lazy.flatMap(\.links)
                .first(where: { $0.id == linkID })?.stream?.hash.lowercased() {
             openingHash = hash
             connecting[hash] = message // More telling than the TV server's "Connecting…".
@@ -969,10 +971,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        let channels = ChannelStore.shared.channels
+        // Your channels first: a stream in both lists counts as yours.
+        let channels = local.map { ($0, ChannelSource.local) } + remote.map { ($0, .remote) }
         let streams = viewers.map { hash, viewers -> ActiveStream in
-            let match = channels.lazy.compactMap { channel in
-                channel.links.first { $0.stream?.hash.lowercased() == hash }.map { (channel, $0) }
+            let match = channels.lazy.compactMap { channel, source in
+                channel.links.first { $0.stream?.hash.lowercased() == hash }
+                    .map { (channel, $0, source) }
             }.first
             let linkName = match.map { $0.1.name.isEmpty ? "Untitled link" : $0.1.name }
             return ActiveStream(
@@ -981,6 +985,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 channelID: match?.0.id,
                 channelName: match?.0.name,
                 channelIcon: match?.0.icon,
+                source: match?.2,
                 viewers: viewers,
                 connecting: connecting[hash],
                 openingOnMac: hash == openingHash

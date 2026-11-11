@@ -163,7 +163,7 @@ final class TVShare: ObservableObject {
             // also waits on `queue` (viewers(), connecting()…), and waiting both ways deadlocks.
             DispatchQueue.main.async {
                 let hidden = self.hideDeadLinks ? Self.deadLinkIDs() : []
-                let body = Self.playlist(channels: ChannelStore.shared.channels, host: host, hiding: hidden)
+                let body = Self.playlist(host: host, hiding: hidden)
                 send(Self.http(200, type: "audio/x-mpegurl; charset=utf-8", body: Data(body.utf8)))
             }
             return
@@ -780,7 +780,7 @@ final class TVShare: ObservableObject {
     static func deadLinkIDs() -> Set<UUID> {
         let current = LinkChecker.shared.results
         var dead: Set<UUID> = []
-        for channel in ChannelStore.shared.channels {
+        for channel in ChannelStore.shared.channels + RemoteList.shared.store.channels {
             for link in channel.links where (current[link.id] ?? link.lastResult)?.isDead == true {
                 dead.insert(link.id)
             }
@@ -788,10 +788,24 @@ final class TVShare: ObservableObject {
         return dead
     }
 
-    static func playlist(channels: [Channel], host: String, hiding hidden: Set<UUID> = []) -> String {
-        var out = "#EXTM3U\n"
+    /// Put before the remote list's channel names on the TV, to tell them from yours.
+    static let remotePrefix = "R - "
+
+    /// Your channels, then the remote list's (prefixed with `remotePrefix`).
+    /// Call on the main thread.
+    static func playlist(host: String, hiding hidden: Set<UUID> = []) -> String {
+        "#EXTM3U\n"
+            + entries(channels: ChannelStore.shared.channels, host: host, hiding: hidden)
+            + entries(channels: RemoteList.shared.store.channels, host: host, hiding: hidden,
+                      prefix: remotePrefix)
+    }
+
+    private static func entries(
+        channels: [Channel], host: String, hiding hidden: Set<UUID>, prefix: String = ""
+    ) -> String {
+        var out = ""
         for channel in channels {
-            let group = clean(channel.name)
+            let group = prefix + clean(channel.name)
             var logo = ""
             if case let .image(fileName) = channel.icon {
                 logo = " tvg-logo=\"http://\(host):\(port)/icons/\(fileName)\""

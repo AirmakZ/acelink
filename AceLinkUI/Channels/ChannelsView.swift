@@ -420,7 +420,11 @@ struct ChannelsView: View {
             if !shown { ui.switchToRemoteOnURL = false }
         }
         .onChange(of: showRemote) { _ in
-            ui.selection = current.channels.first?.id
+            // Picking a stream in Now Playing selects its channel before switching to its
+            // list; otherwise the selection is the other list's, so start at the first channel.
+            if current.channel(id: ui.selection) == nil {
+                ui.selection = current.channels.first?.id
+            }
             if showRemote, remoteFailure != nil { remote.refresh() }
         }
         .frame(minWidth: 640, minHeight: 400)
@@ -454,7 +458,12 @@ struct ChannelsView: View {
                 onStopAll: actions.stop,
                 onStopStream: actions.stopStream,
                 onCancelOpening: actions.cancelOpening,
-                onSelectChannel: { ui.selection = $0 }
+                onSelectChannel: { stream in
+                    guard let channelID = stream.channelID, let source = stream.source else { return }
+                    // Show the list it's in; the switch keeps this selection (see below).
+                    ui.selection = channelID
+                    showRemote = source == .remote
+                }
             )
         }
         .toolbar {
@@ -728,6 +737,21 @@ struct ChannelsView: View {
     }
 
     private func channelList(compact: Bool) -> some View {
+        ScrollViewReader { proxy in
+            channelRows(compact: compact)
+                .onAppear {
+                    // A new list starts at the top: bring a channel picked in Now Playing
+                    // into view. After the rows are laid out, or there's nothing to scroll.
+                    guard let id = ui.selection, id != current.channels.first?.id else { return }
+                    DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+                }
+        }
+        // A new list per source, so switching starts at the top instead of keeping the
+        // other list's scroll position (which could leave every row above the view).
+        .id(showRemote)
+    }
+
+    private func channelRows(compact: Bool) -> some View {
         // Explicit: the icon column lives in the detail, which would default to .inset.
         List(selection: $ui.selection) {
             ForEach(current.channels) { channel in
@@ -772,9 +796,6 @@ struct ChannelsView: View {
             .onMove(perform: showRemote ? nil : store.moveChannels)
         }
         .listStyle(.sidebar)
-        // A new list per source, so switching starts at the top instead of keeping the
-        // other list's scroll position (which could leave every row above the view).
-        .id(showRemote)
         .onDeleteCommand {
             if !showRemote, let channel = store.channel(id: ui.selection) {
                 ui.channelPendingDelete = channel
@@ -1317,7 +1338,8 @@ struct StatusBar: View {
     let onStopAll: () -> Void
     let onStopStream: (String) -> Void
     let onCancelOpening: () -> Void
-    let onSelectChannel: (UUID) -> Void
+    /// Shows the channel of a stream, in the list it comes from.
+    let onSelectChannel: (ActiveStream) -> Void
 
     @AppStorage("nowPlayingExpanded") private var expanded = false
 
@@ -1384,6 +1406,7 @@ struct StatusBar: View {
     private var summary: some View {
         HStack(spacing: 8) {
             if streams.count == 1, let stream = streams.first {
+                if let source = stream.source { StreamSourceIcon(source: source) }
                 StreamStateIcon(connecting: stream.connecting != nil)
                 Text(stream.name).fontWeight(.semibold).lineLimit(1)
                 ViewersLabel(viewers: stream.viewers)
@@ -1391,6 +1414,12 @@ struct StatusBar: View {
                 Spacer(minLength: 8)
                 StreamStopButton(stream: stream, onStop: onStopStream, onCancelOpening: onCancelOpening)
             } else {
+                // Each list the streams come from, in the selector's order.
+                ForEach([ChannelSource.local, .remote], id: \.self) { source in
+                    if streams.contains(where: { $0.source == source }) {
+                        StreamSourceIcon(source: source)
+                    }
+                }
                 StreamStateIcon(connecting: streams.contains { $0.connecting != nil })
                 Text("\(streams.count) streams:").fontWeight(.semibold)
                 Text(streams.map(\.name).joined(separator: " + "))
@@ -1433,7 +1462,7 @@ struct NowPlayingPanel: View {
     let onStop: (String) -> Void
     let onCancelOpening: () -> Void
     let onStopAll: () -> Void
-    let onSelect: (UUID) -> Void
+    let onSelect: (ActiveStream) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1454,7 +1483,10 @@ struct NowPlayingPanel: View {
             Divider()
             ForEach(streams) { stream in
                 row(stream)
-                if stream.id != streams.last?.id { Divider().padding(.leading, 46) }
+                if stream.id != streams.last?.id {
+                    // Lined up with the text: padding, source icon, channel icon and spacing.
+                    Divider().padding(.leading, 12 + StreamSourceIcon.width + 6 + 24 + 10)
+                }
             }
         }
         .padding(.bottom, 4)
@@ -1463,6 +1495,8 @@ struct NowPlayingPanel: View {
 
     private func row(_ stream: ActiveStream) -> some View {
         HStack(spacing: 10) {
+            StreamSourceIcon(source: stream.source)
+                .padding(.trailing, -4) // Closer to its channel icon than to the text.
             Group {
                 if let icon = stream.channelIcon {
                     ChannelIconView(icon: icon, size: 24)
@@ -1486,7 +1520,29 @@ struct NowPlayingPanel: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
-        .onTapGesture { stream.channelID.map(onSelect) }
+        .onTapGesture { onSelect(stream) }
+    }
+}
+
+/// The Local/Remote symbol of the list a stream comes from, small enough for a status line.
+/// Keeps its width without a source, so rows stay aligned.
+struct StreamSourceIcon: View {
+    let source: ChannelSource?
+
+    static let width: CGFloat = 16
+
+    var body: some View {
+        Group {
+            if let source = source {
+                Image(systemName: source.systemImage)
+                    .foregroundColor(.secondary)
+                    .help(source.help)
+            } else {
+                Color.clear
+            }
+        }
+        .font(.caption)
+        .frame(width: Self.width)
     }
 }
 

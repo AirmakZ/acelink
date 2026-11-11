@@ -772,6 +772,9 @@ struct ChannelsView: View {
             .onMove(perform: showRemote ? nil : store.moveChannels)
         }
         .listStyle(.sidebar)
+        // A new list per source, so switching starts at the top instead of keeping the
+        // other list's scroll position (which could leave every row above the view).
+        .id(showRemote)
         .onDeleteCommand {
             if !showRemote, let channel = store.channel(id: ui.selection) {
                 ui.channelPendingDelete = channel

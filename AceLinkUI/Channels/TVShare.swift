@@ -169,6 +169,20 @@ final class TVShare: ObservableObject {
             return
         }
 
+        if path == EPGGuide.path {
+            // The channels are read on the main thread (see above); the file is built here.
+            DispatchQueue.main.async {
+                let epg = EPGGuide.shared
+                guard let guide = epg.guide, epg.isEnabled else { return send(Self.notFound) }
+                let ids = Self.tvgIDs()
+                self.queue.async {
+                    send(Self.http(200, type: "application/xml; charset=utf-8",
+                                   body: guide.xml(for: ids)))
+                }
+            }
+            return
+        }
+
         if path.hasPrefix("/play/") {
             let hop = query.first { $0.name == "hop" }?.value.flatMap(Int.init) ?? 0
             return play(path: path, hop: hop, host: host, client: client, send: send)
@@ -794,10 +808,30 @@ final class TVShare: ObservableObject {
     /// Your channels, then the remote list's (prefixed with `remotePrefix`).
     /// Call on the main thread.
     static func playlist(host: String, hiding hidden: Set<UUID> = []) -> String {
-        "#EXTM3U\n"
+        header(host: host)
             + entries(channels: ChannelStore.shared.channels, host: host, hiding: hidden)
             + entries(channels: RemoteList.shared.store.channels, host: host, hiding: hidden,
                       prefix: remotePrefix)
+    }
+
+    /// Points TV apps to the guide when there is one (`url-tvg`, and `x-tvg-url` for the apps
+    /// that read that name instead).
+    private static func header(host: String) -> String {
+        let epg = EPGGuide.shared
+        guard epg.isEnabled, epg.guide != nil else { return "#EXTM3U\n" }
+        let url = "http://\(host):\(port)\(EPGGuide.path)"
+        return "#EXTM3U url-tvg=\"\(url)\" x-tvg-url=\"\(url)\"\n"
+    }
+
+    /// The guide channels of every link in the playlist. Call on the main thread.
+    private static func tvgIDs() -> Set<String> {
+        var ids: Set<String> = []
+        for channel in ChannelStore.shared.channels + RemoteList.shared.store.channels {
+            for link in channel.links {
+                if let id = EPGGuide.shared.tvgID(channel: channel, link: link) { ids.insert(id) }
+            }
+        }
+        return ids
     }
 
     private static func entries(
@@ -814,7 +848,10 @@ final class TVShare: ObservableObject {
                 guard let stream = link.stream else { continue }
                 let name = clean(link.name.isEmpty ? "Link" : link.name)
                 let url = "http://\(host):\(port)/play/\(stream.param)/\(stream.hash).m3u8"
-                out += "#EXTINF:-1\(logo) group-title=\"\(group)\",\(group) · \(name)\n\(url)\n"
+                let tvgID = EPGGuide.shared.tvgID(channel: channel, link: link)
+                    .map { " tvg-id=\"\(clean($0))\"" } ?? ""
+                out += "#EXTINF:-1\(tvgID)\(logo) group-title=\"\(group)\"," +
+                    "\(group) · \(name)\n\(url)\n"
             }
         }
         return out

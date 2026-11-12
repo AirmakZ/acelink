@@ -94,6 +94,8 @@ struct Channel: Codable, Identifiable, Equatable {
     var name: String
     var icon: ChannelIcon = .default
     var links: [StreamLink] = []
+    /// The TV guide channel to use instead of the one matched by name (see `EPGGuide`).
+    var epgID: String?
 }
 
 /// Keeps the channel list in memory and saves it to

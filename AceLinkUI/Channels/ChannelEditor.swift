@@ -44,6 +44,7 @@ final class ChannelDraft: ObservableObject {
 
 struct ChannelEditor: View {
     @StateObject private var draft: ChannelDraft
+    @ObservedObject private var epg = EPGGuide.shared
     let isNew: Bool
     let onSave: (Channel) -> Void
     let onCancel: () -> Void
@@ -99,6 +100,8 @@ struct ChannelEditor: View {
             }
             .frame(height: 190, alignment: .top)
 
+            if epg.isEnabled { guideField }
+
             HStack {
                 Spacer()
                 Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
@@ -106,6 +109,8 @@ struct ChannelEditor: View {
                     var saved = draft.channel
                     saved.name = saved.name.trimmingCharacters(in: .whitespaces)
                     saved.icon = draft.icon
+                    let epgID = saved.epgID?.trimmingCharacters(in: .whitespaces) ?? ""
+                    saved.epgID = epgID.isEmpty ? nil : epgID
                     onSave(saved)
                 }
                 .keyboardShortcut(.defaultAction)
@@ -114,6 +119,30 @@ struct ChannelEditor: View {
         }
         .padding(20)
         .frame(width: 440)
+    }
+
+    /// The TV guide channel: empty matches by name, shown as the placeholder.
+    private var guideField: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("TV Guide ID")
+                TextField(
+                    "TV Guide ID",
+                    text: Binding(
+                        get: { draft.channel.epgID ?? "" },
+                        set: { draft.channel.epgID = $0 }
+                    ),
+                    prompt: Text(epg.automaticMatch(for: draft.channel.name) ?? "Not matched")
+                )
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+            }
+            Text("Leave it empty to match the guide by name. Links named after a guide " +
+                "channel use that one.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var symbolPicker: some View {

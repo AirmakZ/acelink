@@ -102,6 +102,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Loads the saved remote list and downloads it again, then keeps it updated.
         _ = RemoteList.shared
+        // Loads the saved TV guide (if it's on) and keeps it updated.
+        _ = EPGGuide.shared
 
         // Show a stream's progress as soon as it starts opening.
         status.onChange = { [weak self] in self?.refreshNowPlaying() }

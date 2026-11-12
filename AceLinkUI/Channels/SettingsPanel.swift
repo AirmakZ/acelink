@@ -8,7 +8,9 @@ struct SettingsPanel: View {
     let onExport: () -> Void
     let onImport: () -> Void
 
+    @ObservedObject var epg = EPGGuide.shared
     @State private var urlText = ""
+    @State private var guideURLText = ""
     @FocusState private var urlFieldFocused: Bool
 
     private var trimmedURL: String { urlText.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -20,12 +22,15 @@ struct SettingsPanel: View {
         VStack(alignment: .leading, spacing: 16) {
             remoteSection
             Divider()
+            guideSection
+            Divider()
             channelsSection
         }
         .padding(16)
         .frame(width: 400)
         .onAppear {
             urlText = remote.urlString
+            guideURLText = epg.urlString
             // Opened to set the first address (e.g. by picking Remote): type right away.
             if remote.urlString.isEmpty { urlFieldFocused = true }
         }
@@ -97,6 +102,90 @@ struct SettingsPanel: View {
                 Text("No address set.").foregroundColor(.secondary)
             }
         }
+    }
+
+    private var trimmedGuideURL: String {
+        guideURLText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Empty is allowed: it goes back to the default guide.
+    private var isValidGuideURL: Bool {
+        trimmedGuideURL.isEmpty || RemoteList.validURL(trimmedGuideURL) != nil
+    }
+
+    private var guideURLChanged: Bool {
+        (trimmedGuideURL.isEmpty ? EPGGuide.defaultURL : trimmedGuideURL) != epg.urlString
+    }
+
+    private var guideSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("TV Guide").font(.headline)
+            Text("An XMLTV guide (.xml or .xml.gz) sent with the Share to TV playlist. " +
+                "Channels are matched to it by name; set a channel's guide ID to choose " +
+                "another. Empty uses EPG dobleM (Spain).")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("Send a TV guide to the TV", isOn: Binding(
+                get: { epg.isEnabled },
+                set: { epg.setEnabled($0) }
+            ))
+            HStack {
+                TextField(EPGGuide.defaultURL, text: $guideURLText)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(saveGuideURL)
+                Button("Save", action: saveGuideURL)
+                    .disabled(!isValidGuideURL || !guideURLChanged)
+            }
+            .disabled(!epg.isEnabled)
+            if epg.isEnabled {
+                Group {
+                    if !isValidGuideURL {
+                        Text("Enter an address starting with http:// or https://.")
+                            .foregroundColor(.red)
+                    } else if !guideURLChanged {
+                        guideStatus
+                    }
+                }
+                .font(.caption)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var guideStatus: some View {
+        switch epg.state {
+        case .loading:
+            Text("Downloading the guide…").foregroundColor(.secondary)
+        case let .updated(date):
+            HStack {
+                Text("Updated at \(date.formatted(date: .omitted, time: .shortened)). " +
+                    matchedText)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Update Now") { epg.refresh() }
+                    .controlSize(.small)
+            }
+        case .failed:
+            Text("Could not update: \(epg.failure ?? "unknown error").")
+                .foregroundColor(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        case .idle:
+            EmptyView()
+        }
+    }
+
+    /// "12 of 20 channels have a guide."
+    private var matchedText: String {
+        let channels = store.channels + remote.store.channels
+        return "\(epg.matchedCount(of: channels)) of \(channels.count) channels have a guide."
+    }
+
+    private func saveGuideURL() {
+        guard isValidGuideURL, guideURLChanged else { return }
+        epg.setURL(trimmedGuideURL)
+        guideURLText = epg.urlString
     }
 
     private var channelsSection: some View {

@@ -8,8 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		08C8C1F674D982F98DED276C /* ChannelStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81E335DFC6794A433BE1C416 /* ChannelStore.swift */; };
-		A1B2C3D4E5F60718293A4B5C /* RemoteList.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* RemoteList.swift */; };
 		32C0103F5667E6198C404080 /* ChannelsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */; };
+		40418B9430A643120057FF09 /* EPGGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40418B9330A643120057FF09 /* EPGGuide.swift */; };
+		48AFFA51E5BE10FB630A0D0C /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FDD13666BD2B6179C229279 /* SettingsPanel.swift */; };
 		4D045DCD26D669C900D4D816 /* Makefile in Resources */ = {isa = PBXBuildFile; fileRef = 4D045DCC26D669C900D4D816 /* Makefile */; };
 		4D0CFED024278D0900264B83 /* UpdateMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D0CFECF24278D0900264B83 /* UpdateMenu.swift */; };
 		4D0CFED224278D8400264B83 /* InstallDockerMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D0CFED124278D8400264B83 /* InstallDockerMenu.swift */; };
@@ -27,10 +28,10 @@
 		4DE97F3026A4652900432554 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 4DE97F2F26A4652900432554 /* README.md */; };
 		574AEBB4A19776D2E8A44943 /* LinkEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E34AB54268EDF65AD2F4FB37 /* LinkEditor.swift */; };
 		6D8790145A77518D2760CFB5 /* TVSharePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */; };
-		48AFFA51E5BE10FB630A0D0C /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FDD13666BD2B6179C229279 /* SettingsPanel.swift */; };
 		8013427A04D2059C577EF22C /* TVShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD6B1198B376557547750934 /* TVShare.swift */; };
 		9D469EEE812D4E824D8978EA /* ChannelsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59ECC785630B71AFCC2B8C36 /* ChannelsView.swift */; };
 		9EA0DD7D1261E0CE76E55FE1 /* BulkLinkEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* RemoteList.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5D /* RemoteList.swift */; };
 		AD5A8022FAB8D399F2C0D627 /* URLSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A88734E6F5BA877F00D41 /* URLSession.swift */; };
 		AD5A80E628235858EAB10D6C /* PlaylistServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A8985772955383DE6F9FD /* PlaylistServer.swift */; };
 		AD5A816994F7B6FAEF5AC7F0 /* FileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A87A890E9387B4F78C835 /* FileManager.swift */; };
@@ -49,7 +50,6 @@
 		AD5A8AA375A29B3B6B7C4B7F /* Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A8936895AD49047CC3118 /* Service.swift */; };
 		AD5A8AFFC8E5D483298F1D99 /* AppError.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A806B5F7355F010954D07 /* AppError.swift */; };
 		AD5A8B1147DBEFCDB64C9215 /* NSAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A8F6F082636C5D21A3C6E /* NSAlert.swift */; };
-		E1A9C0D0A1B2C3D4E5F60002 /* EngineRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A9C0D0A1B2C3D4E5F60001 /* EngineRuntime.swift */; };
 		AD5A8BAC68DF8FA7D78C1FAC /* StreamPeers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A80670EFB8FEC13A07959 /* StreamPeers.swift */; };
 		AD5A8C534C4A28B340F84D48 /* AceStreamPlaylist.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A86A22D03052826FE34C3 /* AceStreamPlaylist.swift */; };
 		AD5A8C93E5AA9CAF89B785D4 /* DockerImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A8EAD6357A8D9E3D66A96 /* DockerImage.swift */; };
@@ -61,6 +61,7 @@
 		AD5A8FA5870DBB004FDB0279 /* Bundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5A8CEF5E264FB7E7B48639 /* Bundle.swift */; };
 		AF77C839F219E84092D64545 /* PlaybackStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15535C235F13F4528AD3731E /* PlaybackStatus.swift */; };
 		B4FDA7FD80CCE580EF66B85F /* LinkChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 821D95F03B599E39F091CC9E /* LinkChecker.swift */; };
+		E1A9C0D0A1B2C3D4E5F60002 /* EngineRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1A9C0D0A1B2C3D4E5F60001 /* EngineRuntime.swift */; };
 		EC9FAAA6C1B4467EE3CF0982 /* ChannelEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E68B4B7A76D1228A793AF73 /* ChannelEditor.swift */; };
 		F080288CFB23B0B8425C606D /* ChannelIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 047F0E3282CF9B9123EB3A5D /* ChannelIconView.swift */; };
 /* End PBXBuildFile section */
@@ -68,6 +69,7 @@
 /* Begin PBXFileReference section */
 		047F0E3282CF9B9123EB3A5D /* ChannelIconView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelIconView.swift; sourceTree = "<group>"; };
 		15535C235F13F4528AD3731E /* PlaybackStatus.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PlaybackStatus.swift; sourceTree = "<group>"; };
+		40418B9330A643120057FF09 /* EPGGuide.swift */ = {isa = PBXFileReference; path = EPGGuide.swift; sourceTree = "<group>"; };
 		4D045DCC26D669C900D4D816 /* Makefile */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = Makefile; sourceTree = SOURCE_ROOT; };
 		4D0CFECF24278D0900264B83 /* UpdateMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateMenu.swift; sourceTree = "<group>"; };
 		4D0CFED124278D8400264B83 /* InstallDockerMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallDockerMenu.swift; sourceTree = "<group>"; };
@@ -87,15 +89,14 @@
 		4DE97F2D26A45F6B00432554 /* player.html */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.html; path = player.html; sourceTree = SOURCE_ROOT; };
 		4DE97F2F26A4652900432554 /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = SOURCE_ROOT; };
 		5711D45AF8087D70B9E6DBCB /* TVSharePanel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TVSharePanel.swift; sourceTree = "<group>"; };
-		5FDD13666BD2B6179C229279 /* SettingsPanel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsPanel.swift; sourceTree = "<group>"; };
 		59ECC785630B71AFCC2B8C36 /* ChannelsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelsView.swift; sourceTree = "<group>"; };
+		5FDD13666BD2B6179C229279 /* SettingsPanel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SettingsPanel.swift; sourceTree = "<group>"; };
 		81E335DFC6794A433BE1C416 /* ChannelStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelStore.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F60718293A4B5D /* RemoteList.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RemoteList.swift; sourceTree = "<group>"; };
 		821D95F03B599E39F091CC9E /* LinkChecker.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LinkChecker.swift; sourceTree = "<group>"; };
 		89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelsWindowController.swift; sourceTree = "<group>"; };
 		9E68B4B7A76D1228A793AF73 /* ChannelEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelEditor.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5D /* RemoteList.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = RemoteList.swift; sourceTree = "<group>"; };
 		AD5A800E3EAF8AB65F34487F /* Pipe.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Pipe.swift; sourceTree = "<group>"; };
-		E1A9C0D0A1B2C3D4E5F60001 /* EngineRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineRuntime.swift; sourceTree = "<group>"; };
 		AD5A80670EFB8FEC13A07959 /* StreamPeers.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = StreamPeers.swift; sourceTree = "<group>"; };
 		AD5A806B5F7355F010954D07 /* AppError.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppError.swift; sourceTree = "<group>"; };
 		AD5A8225D690C3597305286E /* .swiftlint.yml */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.yaml; path = .swiftlint.yml; sourceTree = "<group>"; };
@@ -124,6 +125,7 @@
 		AD5A8FCB503ABA8B866D285D /* acelink.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = acelink.png; sourceTree = SOURCE_ROOT; };
 		CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BulkLinkEditor.swift; sourceTree = "<group>"; };
 		DD6B1198B376557547750934 /* TVShare.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = TVShare.swift; sourceTree = "<group>"; };
+		E1A9C0D0A1B2C3D4E5F60001 /* EngineRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineRuntime.swift; sourceTree = "<group>"; };
 		E34AB54268EDF65AD2F4FB37 /* LinkEditor.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LinkEditor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -215,6 +217,7 @@
 				821D95F03B599E39F091CC9E /* LinkChecker.swift */,
 				CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */,
 				89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */,
+				40418B9330A643120057FF09 /* EPGGuide.swift */,
 			);
 			path = Channels;
 			sourceTree = "<group>";
@@ -372,6 +375,7 @@
 				4D0CFED024278D0900264B83 /* UpdateMenu.swift in Sources */,
 				4D0CFED62427947900264B83 /* OpenStreamMenu.swift in Sources */,
 				4DB4E66F2108FA7200C2F1F2 /* AppDelegate.swift in Sources */,
+				40418B9430A643120057FF09 /* EPGGuide.swift in Sources */,
 				AD5A8325618CC7EF60F0CD61 /* String.swift in Sources */,
 				AD5A8E1D59A9E6B19EAFB5DD /* URL.swift in Sources */,
 				AD5A87C16ADD674A83F511DD /* AppConstants.swift in Sources */,
@@ -527,20 +531,21 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = "AceLinkUI/AceLinkUI.entitlements";
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				CODE_SIGN_ENTITLEMENTS = AceLinkUI/AceLinkUI.entitlements;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
-				INFOPLIST_FILE = "AceLinkUI/Info.plist";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				INFOPLIST_FILE = AceLinkUI/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
 				MARKETING_VERSION = "";
+				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.airmakz.acelinkui;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -552,20 +557,21 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = "AceLinkUI/AceLinkUI.entitlements";
-				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				CODE_SIGN_ENTITLEMENTS = AceLinkUI/AceLinkUI.entitlements;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
-				INFOPLIST_FILE = "AceLinkUI/Info.plist";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				INFOPLIST_FILE = AceLinkUI/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = "$(RECOMMENDED_MACOSX_DEPLOYMENT_TARGET)";
 				MARKETING_VERSION = "";
+				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.airmakz.acelinkui;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

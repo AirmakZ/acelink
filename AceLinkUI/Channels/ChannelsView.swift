@@ -177,6 +177,96 @@ final class ChannelsUIState: ObservableObject {
     @Published var switchToRemoteOnURL = false
     /// The channel a link drag is hovering over in the sidebar.
     @Published var dropTarget: UUID?
+    /// The toolbar's search: shows only the links whose name has every word of it.
+    @Published var search = ""
+    /// One field for the window's life: SwiftUI rebuilds toolbar items when the toolbar
+    /// changes (the link count in the title changes with every letter typed), and a new
+    /// field would lose the typing.
+    let searchField = PersistentSearchField()
+}
+
+/// Whether a link's name contains every word of a search, ignoring case and accents.
+func linkMatches(_ link: StreamLink, search: String) -> Bool {
+    search.split(whereSeparator: \.isWhitespace).allSatisfy {
+        link.name.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+}
+
+/// A search field that keeps the cursor when it's moved to another toolbar item: if it
+/// was being typed in when it left the window, it takes the cursor back when it returns.
+final class PersistentSearchField: NSSearchField {
+    private var wasEditing = false
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil, currentEditor() != nil { wasEditing = true }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard wasEditing, window != nil else { return }
+        wasEditing = false
+        DispatchQueue.main.async { [weak self] in self?.focus() }
+    }
+
+    /// Takes the cursor back if something takes it in the next moments: selecting another
+    /// channel in the sidebar while typing makes its list the first responder.
+    func keepFocus() {
+        guard currentEditor() != nil else { return }
+        for delay in [0, 0.1, 0.3] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self, self.currentEditor() == nil else { return }
+                self.focus()
+            }
+        }
+    }
+
+    /// Puts the cursor at the end of the text.
+    func focus() {
+        guard let window = window, window.makeFirstResponder(self) else { return }
+        currentEditor()?.selectedRange = NSRange(location: (stringValue as NSString).length,
+                                                 length: 0)
+    }
+}
+
+/// The toolbar's search field: AppKit's, because SwiftUI's `searchable` can only go at
+/// the trailing end of a Mac toolbar, and this one sits next to the list's own buttons.
+private struct ToolbarSearchField: NSViewRepresentable {
+    let field: PersistentSearchField
+    @Binding var text: String
+
+    func makeNSView(context: Context) -> PersistentSearchField {
+        field.placeholderString = "Search"
+        field.sendsSearchStringImmediately = true
+        field.delegate = context.coordinator
+        // The clear button and Esc send the action without a text change.
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.changed(_:))
+        return field
+    }
+
+    func updateNSView(_ field: PersistentSearchField, context: Context) {
+        context.coordinator.text = $text
+        if field.stringValue != text { field.stringValue = text }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            if let field = notification.object as? NSSearchField { changed(field) }
+        }
+
+        @objc func changed(_ field: NSSearchField) {
+            if text.wrappedValue != field.stringValue { text.wrappedValue = field.stringValue }
+        }
+    }
 }
 
 /// Local/Remote selector in the sidebar's part of the toolbar. The Remote segment shows a
@@ -314,6 +404,25 @@ struct ChannelsView: View {
 
     private var current: ChannelStore { showRemote ? remoteStore : store }
 
+    private var search: String { ui.search.trimmingCharacters(in: .whitespaces) }
+
+    /// The channel's links that match the search (all of them without one).
+    private func visibleLinks(of channel: Channel) -> [StreamLink] {
+        search.isEmpty ? channel.links : channel.links.filter { linkMatches($0, search: search) }
+    }
+
+    /// The channels with links that match the search; the others are hidden.
+    private var visibleChannels: [Channel] {
+        search.isEmpty ? current.channels
+            : current.channels.filter { !visibleLinks(of: $0).isEmpty }
+    }
+
+    /// The selected channel, unless the search hides it.
+    private var selectedChannel: Channel? {
+        guard let channel = current.channel(id: ui.selection) else { return nil }
+        return search.isEmpty || !visibleLinks(of: channel).isEmpty ? channel : nil
+    }
+
     private var remoteFailure: String? { remote.failure }
 
     var body: some View {
@@ -419,11 +528,25 @@ struct ChannelsView: View {
         .onChange(of: ui.showSettings) { shown in
             if !shown { ui.switchToRemoteOnURL = false }
         }
+        .onChange(of: ui.search) { _ in
+            // The search hid the selected channel: show the first one with results.
+            if selectedChannel == nil, let first = visibleChannels.first {
+                ui.searchField.keepFocus()
+                ui.selection = first.id
+            }
+        }
+        // ⌘F, as in other Mac apps. Invisible, but still answering its shortcut.
+        .background(
+            Button("Search") { ui.searchField.focus() }
+                .keyboardShortcut("f")
+                .opacity(0)
+                .allowsHitTesting(false)
+        )
         .onChange(of: showRemote) { _ in
             // Picking a stream in Now Playing selects its channel before switching to its
             // list; otherwise the selection is the other list's, so start at the first channel.
-            if current.channel(id: ui.selection) == nil {
-                ui.selection = current.channels.first?.id
+            if selectedChannel == nil {
+                ui.selection = visibleChannels.first?.id
             }
             if showRemote, remoteFailure != nil { remote.refresh() }
         }
@@ -435,9 +558,10 @@ struct ChannelsView: View {
 
     private var detail: some View {
         Group {
-            if let channel = current.channel(id: ui.selection) {
+            if let channel = selectedChannel {
                 ChannelDetailView(
                     channel: channel,
+                    visibleLinks: visibleLinks(of: channel),
                     store: current,
                     readOnly: showRemote,
                     status: status,
@@ -473,7 +597,10 @@ struct ChannelsView: View {
             }
             // Pushes everything after the channel title to the trailing edge.
             if #available(macOS 26, *) { ToolbarSpacer(.flexible, placement: .primaryAction) }
-            if let channel = current.channel(id: ui.selection) {
+            searchItem
+            // Its own capsule, apart from the list's buttons.
+            if #available(macOS 26, *) { ToolbarSpacer(.fixed, placement: .primaryAction) }
+            if let channel = selectedChannel {
                 ToolbarItemGroup(placement: .primaryAction) {
                     checkControls(for: channel)
                     if !showRemote { addMenu(for: channel) }
@@ -511,6 +638,17 @@ struct ChannelsView: View {
                 }
             }
         }
+    }
+
+    /// The search field, left of the list's buttons, in a glass capsule like theirs.
+    private var searchItem: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) { searchField }
+    }
+
+    private var searchField: some View {
+        ToolbarSearchField(field: ui.searchField, text: $ui.search)
+            .frame(width: 200)
+            .help("Show only the channels whose name has these words. ⌘F")
     }
 
     // MARK: Export and import
@@ -754,7 +892,7 @@ struct ChannelsView: View {
     private func channelRows(compact: Bool) -> some View {
         // Explicit: the icon column lives in the detail, which would default to .inset.
         List(selection: $ui.selection) {
-            ForEach(current.channels) { channel in
+            ForEach(visibleChannels) { channel in
                 channelRow(channel, compact: compact)
                 .padding(.vertical, 3)
                 .background(
@@ -793,7 +931,8 @@ struct ChannelsView: View {
                     }
                 }
             }
-            .onMove(perform: showRemote ? nil : store.moveChannels)
+            // Positions in a filtered list aren't the real ones.
+            .onMove(perform: showRemote || !search.isEmpty ? nil : store.moveChannels)
         }
         .listStyle(.sidebar)
         .onDeleteCommand {
@@ -817,7 +956,7 @@ struct ChannelsView: View {
                 }
             VStack(alignment: .leading, spacing: 1) {
                 Text(channel.name).lineLimit(1)
-                Text("\(channel.links.count) channel\(channel.links.count == 1 ? "" : "s")")
+                Text(Self.countText(shown: visibleLinks(of: channel).count, of: channel.links.count))
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -828,7 +967,29 @@ struct ChannelsView: View {
         .help(compact ? channel.name : "")
     }
 
+    /// "23 channels", or "3 of 23 channels" while searching.
+    static func countText(shown: Int, of total: Int) -> String {
+        let noun = "channel\(total == 1 ? "" : "s")"
+        return shown == total ? "\(total) \(noun)" : "\(shown) of \(total) \(noun)"
+    }
+
+    @ViewBuilder
     private var emptyDetail: some View {
+        if !search.isEmpty, visibleChannels.isEmpty {
+            VStack(spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 44))
+                    .foregroundColor(.secondary)
+                Text("No Results for “\(search)”").font(.title2)
+                Text("No channel's name has these words.").foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            groupsDetail
+        }
+    }
+
+    private var groupsDetail: some View {
         VStack(spacing: 12) {
             Image(systemName: "tv")
                 .font(.system(size: 44))
@@ -856,6 +1017,8 @@ struct ChannelsView: View {
 
 struct ChannelDetailView: View {
     let channel: Channel
+    /// Its links that match the toolbar's search: the ones the list shows.
+    let visibleLinks: [StreamLink]
     @ObservedObject var store: ChannelStore
     /// The remote list: links can be played and checked, not edited.
     var readOnly = false
@@ -898,7 +1061,7 @@ struct ChannelDetailView: View {
     /// Click selects, ⌘-click adds or removes, ⇧-click selects the range from the anchor.
     private func select(_ link: StreamLink) {
         let flags = NSEvent.modifierFlags
-        let links = channel.links
+        let links = visibleLinks
         if flags.contains(.command) {
             if selection.contains(link.id) { selection.remove(link.id) } else { selection.insert(link.id) }
             anchor = link.id
@@ -946,7 +1109,7 @@ struct ChannelDetailView: View {
                 .buttonStyle(.borderless)
                 .help("Edit Group")
             }
-            Text("\(channel.links.count) channel\(channel.links.count == 1 ? "" : "s")")
+            Text(ChannelsView.countText(shown: visibleLinks.count, of: channel.links.count))
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .padding(.leading, 6)
@@ -978,7 +1141,7 @@ struct ChannelDetailView: View {
                 // Selection is drawn by hand (see `select`) because the native highlight
                 // can't be made softer.
                 List {
-                    ForEach(channel.links) { link in
+                    ForEach(visibleLinks) { link in
                         LinkRow(
                             link: link,
                             isLoading: status.activeLinkID == link.id && status.isBusy,
@@ -1074,6 +1237,13 @@ struct ChannelDetailView: View {
                     // Reordering goes through the same drag payload as moving to another
                     // channel, so it works for several selected links at once.
                     .onInsert(of: [.plainText]) { index, providers in
+                        // While searching, the index is in the shown links: insert before
+                        // the same link in the whole list.
+                        let index = index < visibleLinks.count
+                            ? channel.links.firstIndex { $0.id == visibleLinks[index].id } ?? index
+                            : (visibleLinks.last.flatMap { last in
+                                channel.links.firstIndex { $0.id == last.id }.map { $0 + 1 }
+                            } ?? channel.links.count)
                         _ = LinkDragPayload.load(from: providers) { payload in
                             // The remote list only allows ordering within a channel.
                             if readOnly, payload.channelID != channel.id { return }
@@ -1085,7 +1255,7 @@ struct ChannelDetailView: View {
                     }
                     .onDelete(perform: readOnly ? nil : { offsets in
                         for index in offsets {
-                            store.delete(linkID: channel.links[index].id, in: channel.id)
+                            store.delete(linkID: visibleLinks[index].id, in: channel.id)
                         }
                     })
                 }

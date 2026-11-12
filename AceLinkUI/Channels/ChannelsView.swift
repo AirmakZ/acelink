@@ -209,8 +209,7 @@ final class PersistentSearchField: NSSearchField {
         DispatchQueue.main.async { [weak self] in self?.focus() }
     }
 
-    /// Takes the cursor back if something takes it in the next moments: selecting another
-    /// channel in the sidebar while typing makes its list the first responder.
+    /// While typing, takes the cursor back if something takes it in the next moments.
     func keepFocus() {
         guard currentEditor() != nil else { return }
         for delay in [0, 0.1, 0.3] {
@@ -529,9 +528,11 @@ struct ChannelsView: View {
             if !shown { ui.switchToRemoteOnURL = false }
         }
         .onChange(of: ui.search) { _ in
+            // What the search shows can rebuild the toolbar (the list's buttons go when
+            // nothing matches) or move the cursor to the sidebar (selecting another channel).
+            ui.searchField.keepFocus()
             // The search hid the selected channel: show the first one with results.
             if selectedChannel == nil, let first = visibleChannels.first {
-                ui.searchField.keepFocus()
                 ui.selection = first.id
             }
         }
@@ -568,7 +569,6 @@ struct ChannelsView: View {
                     checker: checker,
                     actions: actions,
                     onPlay: actions.play,
-                    onEditChannel: { ui.editingChannel = channel },
                     onEditLink: { ui.editingLink = $0 },
                     onBulkAdd: { ui.bulkAdd = BulkAddTarget(id: channel.id) }
                 )
@@ -600,13 +600,13 @@ struct ChannelsView: View {
             searchItem
             // Its own capsule, apart from the list's buttons.
             if #available(macOS 26, *) { ToolbarSpacer(.fixed, placement: .primaryAction) }
-            if let channel = selectedChannel {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    checkControls(for: channel)
-                    if !showRemote { addMenu(for: channel) }
-                }
-                if #available(macOS 26, *) { ToolbarSpacer(.fixed, placement: .primaryAction) }
+            // Always there, disabled without a channel (none, or none matches the search),
+            // so the toolbar doesn't move and the search field keeps the cursor.
+            ToolbarItemGroup(placement: .primaryAction) {
+                checkControls(for: selectedChannel)
+                if !showRemote { addMenu(for: selectedChannel) }
             }
+            if #available(macOS 26, *) { ToolbarSpacer(.fixed, placement: .primaryAction) }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     ui.showTVPanel.toggle()
@@ -748,8 +748,8 @@ struct ChannelsView: View {
 
     /// Check Availability, or a spinner and Cancel while this channel is being checked.
     @ViewBuilder
-    private func checkControls(for channel: Channel) -> some View {
-        if checker.checkingChannelID == channel.id {
+    private func checkControls(for channel: Channel?) -> some View {
+        if let channel = channel, checker.checkingChannelID == channel.id {
             // A bare spinner gets none of a toolbar button's margins and would touch the
             // capsule's edge; give it a button's width.
             ProgressView()
@@ -762,30 +762,34 @@ struct ChannelsView: View {
             .help("Cancel the availability check")
         } else {
             Button {
-                actions.checkAvailability(channel.id)
+                if let channel = channel { actions.checkAvailability(channel.id) }
             } label: {
                 Label("Check Availability", systemImage: "antenna.radiowaves.left.and.right")
             }
-            .disabled(channel.links.isEmpty || checker.isRunning || status.isBusy)
+            .disabled(channel?.links.isEmpty != false || checker.isRunning || status.isBusy)
             .help("Check Availability: test every channel at the same time. "
                 + "Working channels move to the top.")
         }
     }
 
-    private func addMenu(for channel: Channel) -> some View {
+    @ViewBuilder
+    private func addMenu(for channel: Channel?) -> some View {
         Menu {
-            Button("Add Channel…") {
-                let draft = LinkEditor.draftFromClipboard(
-                    defaultName: "Channel \(channel.links.count + 1)"
-                )
-                ui.editingLink = LinkEditTarget(channelID: channel.id, link: draft, isNew: true)
+            if let channel = channel {
+                Button("Add Channel…") {
+                    let draft = LinkEditor.draftFromClipboard(
+                        defaultName: "Channel \(channel.links.count + 1)"
+                    )
+                    ui.editingLink = LinkEditTarget(channelID: channel.id, link: draft, isNew: true)
+                }
+                Button("Add in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
+                Divider()
+                Button("Edit Group…") { ui.editingChannel = channel }
             }
-            Button("Add in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
-            Divider()
-            Button("Edit Group…") { ui.editingChannel = channel }
         } label: {
             Label("Add", systemImage: "plus")
         }
+        .disabled(channel == nil)
         .help("Add channels to this group")
     }
 
@@ -1029,7 +1033,6 @@ struct ChannelDetailView: View {
     @ObservedObject var epg = EPGGuide.shared
     let actions: PlaybackActions
     let onPlay: (StreamLink) -> Void
-    let onEditChannel: () -> Void
     let onEditLink: (LinkEditTarget) -> Void
     let onBulkAdd: () -> Void
 
@@ -1095,24 +1098,11 @@ struct ChannelDetailView: View {
         }
     }
 
-    /// Icon, name, a pencil that edits the channel, and the link count.
+    /// The group's icon and name.
     private var titleItem: some View {
         HStack(spacing: 8) {
             ChannelIconView(icon: channel.icon, size: 34)
             Text(channel.name).font(.title).bold().lineLimit(1)
-            if !readOnly {
-                Button(action: onEditChannel) {
-                    Image(systemName: "pencil")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.borderless)
-                .help("Edit Group")
-            }
-            Text(ChannelsView.countText(shown: visibleLinks.count, of: channel.links.count))
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .padding(.leading, 6)
         }
         // The toolbar starts the item 4 pt from the sidebar's edge; this makes the gap
         // to the icon match the 9 pt above and below it (52 pt bar, 34 pt icon).

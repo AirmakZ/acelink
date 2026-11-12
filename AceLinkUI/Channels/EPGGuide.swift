@@ -349,7 +349,7 @@ final class EPGGuide: ObservableObject {
         var ids: Set<String> = []
         for channel in ChannelStore.shared.channels + RemoteList.shared.store.channels {
             for link in channel.links {
-                if let ref = guideChannel(channel: channel, link: link), ref.source == source {
+                if let ref = guideChannel(for: link), ref.source == source {
                     ids.insert(ref.id)
                 }
             }
@@ -380,31 +380,21 @@ final class EPGGuide: ObservableObject {
 
     // MARK: - Matching
 
-    /// The guide channel of a playlist entry: the link's choice ("Match EPG…"), else the
-    /// channel's guide ID, else what the link's name matches. The channel's name is only
-    /// used for links whose name doesn't say which channel they are ("1080p", "Link 2") or
-    /// starts with it ("M+ LaLiga Option 2" in "M+ LaLiga"): a channel can also be a group of
-    /// different ones ("Sport TV", the list they came from). Call on the main thread.
-    func guideChannel(channel: Channel, link: StreamLink) -> GuideRef? {
+    /// The guide channel of a link: its choice ("Match EPG…"), else what its name matches.
+    /// The name of the channel it's in isn't used: that's a group of links ("DAZN", "Sport
+    /// TV"), not a TV channel. Call on the main thread.
+    func guideChannel(for link: StreamLink) -> GuideRef? {
         guard hasGuide else { return nil }
         switch choice(for: link) {
         case .none: return nil
         case let .channel(ref) where isActive(ref.source): return ref
-        default: break
+        default: return match(link.name)
         }
-        if let id = channel.epgID?.trimmingCharacters(in: .whitespaces), !id.isEmpty {
-            return ref(forTypedID: id)
-        }
-        if let found = match(link.name) { return found }
-        guard let own = Self.key(link.name), let group = Self.key(channel.name) else {
-            return match(channel.name)
-        }
-        return own.hasPrefix(group) ? match(channel.name) : nil
     }
 
-    /// The `tvg-id` of a playlist entry. Call on the main thread.
-    func tvgID(channel: Channel, link: StreamLink) -> String? {
-        guideChannel(channel: channel, link: link).map(servedID)
+    /// The `tvg-id` of a link in the playlist. Call on the main thread.
+    func tvgID(for link: StreamLink) -> String? {
+        guideChannel(for: link).map(servedID)
     }
 
     private func isActive(_ source: UUID) -> Bool {
@@ -419,18 +409,6 @@ final class EPGGuide: ObservableObject {
             if guide.contains(ref.id) { break }
         }
         return "\(source(ref.source)?.label ?? "guide")/\(ref.id)"
-    }
-
-    /// A guide ID typed in the channel editor: served IDs, or a channel ID in any source.
-    private func ref(forTypedID id: String) -> GuideRef? {
-        for (source, guide) in activeGuides {
-            if guide.contains(id) { return GuideRef(source: source.id, id: id) }
-            let prefix = "\(source.label)/"
-            if id.hasPrefix(prefix), guide.contains(String(id.dropFirst(prefix.count))) {
-                return GuideRef(source: source.id, id: String(id.dropFirst(prefix.count)))
-            }
-        }
-        return nil
     }
 
     func choice(for link: StreamLink) -> Choice {
@@ -460,12 +438,6 @@ final class EPGGuide: ObservableObject {
             ensureSchedules(for: [ref])
         }
         UserDefaults.standard.set(choices, forKey: Self.choicesKey)
-    }
-
-    /// What a name matches automatically, for the channel editor. Call on the main thread.
-    func automaticMatch(for name: String) -> String? {
-        guard hasGuide else { return nil }
-        return match(name).map(servedID)
     }
 
     /// Exact matches in every source first, then similar names, both in source order; a
@@ -534,11 +506,9 @@ final class EPGGuide: ObservableObject {
         activeGuides.count > 1 ? source(ref.source)?.label : nil
     }
 
-    /// How many of these channels have a guide. Call on the main thread.
-    func matchedCount(of channels: [Channel]) -> Int {
-        channels.filter { channel in
-            channel.links.contains { guideChannel(channel: channel, link: $0) != nil }
-        }.count
+    /// How many of these links have a guide. Call on the main thread.
+    func matchedCount(of links: [StreamLink]) -> Int {
+        links.filter { guideChannel(for: $0) != nil }.count
     }
 
     /// Builds `/epg.xml` for these channels. Call on the main thread; run the result on any.

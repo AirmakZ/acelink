@@ -830,7 +830,7 @@ final class TVShare: ObservableObject {
         var refs: Set<GuideRef> = []
         for channel in ChannelStore.shared.channels + RemoteList.shared.store.channels {
             for link in channel.links {
-                if let ref = EPGGuide.shared.guideChannel(channel: channel, link: link) {
+                if let ref = EPGGuide.shared.guideChannel(for: link) {
                     refs.insert(ref)
                 }
             }
@@ -852,7 +852,7 @@ final class TVShare: ObservableObject {
                 guard let stream = link.stream else { continue }
                 let name = clean(link.name.isEmpty ? "Link" : link.name)
                 let url = "http://\(host):\(port)/play/\(stream.param)/\(stream.hash).m3u8"
-                let tvgID = EPGGuide.shared.tvgID(channel: channel, link: link)
+                let tvgID = EPGGuide.shared.tvgID(for: link)
                     .map { " tvg-id=\"\(clean($0))\"" } ?? ""
                 out += "#EXTINF:-1\(tvgID)\(logo) group-title=\"\(group)\"," +
                     "\(group) · \(name)\n\(url)\n"

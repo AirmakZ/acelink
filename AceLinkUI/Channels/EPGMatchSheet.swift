@@ -1,10 +1,9 @@
 import SwiftUI
 
 /// "Match EPG…": picks the TV guide channel a link is sent with. Lists the guide channels
-/// its name (or its channel's) most likely means, with what each shows now; searching
-/// looks through the whole guide.
+/// its name most likely means, with what each shows now; searching looks through the
+/// whole guide.
 struct EPGMatchSheet: View {
-    let channel: Channel
     let link: StreamLink
     let onDone: () -> Void
 
@@ -12,19 +11,18 @@ struct EPGMatchSheet: View {
     @State private var query = ""
     @State private var selected: GuideRef?
 
-    init(channel: Channel, link: StreamLink, onDone: @escaping () -> Void) {
-        self.channel = channel
+    init(link: StreamLink, onDone: @escaping () -> Void) {
         self.link = link
         self.onDone = onDone
-        _selected = State(initialValue: EPGGuide.shared.guideChannel(channel: channel, link: link))
+        _selected = State(initialValue: EPGGuide.shared.guideChannel(for: link))
     }
 
-    private var current: GuideRef? { epg.guideChannel(channel: channel, link: link) }
+    private var current: GuideRef? { epg.guideChannel(for: link) }
 
     private var options: [GuideRef] {
         guard epg.hasGuide else { return [] }
         if !query.trimmingCharacters(in: .whitespaces).isEmpty { return epg.search(query) }
-        var refs = epg.suggestions(for: [link.name, channel.name])
+        var refs = epg.suggestions(for: [link.name])
         // The current one, even when it's no longer among the likely ones.
         if let current = current, !refs.contains(current) {
             refs.insert(current, at: 0)
@@ -63,7 +61,7 @@ struct EPGMatchSheet: View {
                 .foregroundColor(.secondary)
             HStack {
                 Button("Automatic") { choose(.automatic) }
-                    .help("Match the guide by the link's or the channel's name")
+                    .help("Match the guide by the link's name")
                 Button("No Guide") { choose(.none) }
                 Spacer()
                 Button("Cancel", action: onDone).keyboardShortcut(.cancelAction)

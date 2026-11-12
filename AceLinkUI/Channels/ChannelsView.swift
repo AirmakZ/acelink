@@ -989,7 +989,7 @@ struct ChannelDetailView: View {
                             lastRate: link.stream.flatMap { transfers.lastRates[$0.hash.lowercased()] },
                             viewers: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.viewers ?? [],
                             connecting: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.connecting,
-                            guide: epg.guideChannel(channel: channel, link: link),
+                            guide: epg.guideChannel(for: link),
                             guideChosen: epg.choice(for: link) != .automatic,
                             onMatchGuide: { matchingLink = link },
                             onStop: { actions.stopLink(link.id) },
@@ -1092,7 +1092,7 @@ struct ChannelDetailView: View {
                 .listStyle(.inset)
                 .background(OutsideClickMonitor { selection = [] })
                 .sheet(item: $matchingLink) { link in
-                    EPGMatchSheet(channel: channel, link: link) { matchingLink = nil }
+                    EPGMatchSheet(link: link) { matchingLink = nil }
                 }
             }
         }

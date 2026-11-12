@@ -118,7 +118,8 @@ struct SettingsPanel: View {
             Text("XMLTV guides (.xml or .xml.gz) sent with the Share to TV playlist. Channels " +
                 "are matched by name in these guides in order, so later ones fill in what " +
                 "earlier ones lack; a name tagged with a country, like (DE), looks in that " +
-                "country's guide first. Right-click a link and choose Match EPG to pick another.")
+                "country's guide first. Links are matched by their own name; right-click one " +
+                "and choose Match EPG to pick another.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -218,10 +219,10 @@ struct SettingsPanel: View {
         }
     }
 
-    /// "12 of 20 channels have a guide."
+    /// "320 of 432 links have a guide."
     private var matchedText: String {
-        let channels = store.channels + remote.store.channels
-        return "\(epg.matchedCount(of: channels)) of \(channels.count) channels have a guide."
+        let links = (store.channels + remote.store.channels).flatMap(\.links)
+        return "\(epg.matchedCount(of: links)) of \(links.count) links have a guide."
     }
 
     private func addGuide() {

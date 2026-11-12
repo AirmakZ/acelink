@@ -173,11 +173,13 @@ final class TVShare: ObservableObject {
             // The channels are read on the main thread (see above); the file is built here.
             DispatchQueue.main.async {
                 let epg = EPGGuide.shared
-                guard let guide = epg.guide, epg.isEnabled else { return send(Self.notFound) }
-                let ids = Self.tvgIDs()
+                guard epg.hasGuide else { return send(Self.notFound) }
+                let refs = Self.guideChannels()
+                // Channels matched since the last download only have the next hours.
+                epg.ensureSchedules(for: refs)
+                let build = epg.xmlBuilder(for: refs)
                 self.queue.async {
-                    send(Self.http(200, type: "application/xml; charset=utf-8",
-                                   body: guide.xml(for: ids)))
+                    send(Self.http(200, type: "application/xml; charset=utf-8", body: build()))
                 }
             }
             return
@@ -818,20 +820,22 @@ final class TVShare: ObservableObject {
     /// that read that name instead).
     private static func header(host: String) -> String {
         let epg = EPGGuide.shared
-        guard epg.isEnabled, epg.guide != nil else { return "#EXTM3U\n" }
+        guard epg.hasGuide else { return "#EXTM3U\n" }
         let url = "http://\(host):\(port)\(EPGGuide.path)"
         return "#EXTM3U url-tvg=\"\(url)\" x-tvg-url=\"\(url)\"\n"
     }
 
     /// The guide channels of every link in the playlist. Call on the main thread.
-    private static func tvgIDs() -> Set<String> {
-        var ids: Set<String> = []
+    private static func guideChannels() -> Set<GuideRef> {
+        var refs: Set<GuideRef> = []
         for channel in ChannelStore.shared.channels + RemoteList.shared.store.channels {
             for link in channel.links {
-                if let id = EPGGuide.shared.tvgID(channel: channel, link: link) { ids.insert(id) }
+                if let ref = EPGGuide.shared.guideChannel(channel: channel, link: link) {
+                    refs.insert(ref)
+                }
             }
         }
-        return ids
+        return refs
     }
 
     private static func entries(

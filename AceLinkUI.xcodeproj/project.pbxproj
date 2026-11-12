@@ -10,6 +10,7 @@
 		08C8C1F674D982F98DED276C /* ChannelStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81E335DFC6794A433BE1C416 /* ChannelStore.swift */; };
 		32C0103F5667E6198C404080 /* ChannelsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */; };
 		40418B9430A643120057FF09 /* EPGGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40418B9330A643120057FF09 /* EPGGuide.swift */; };
+		40418B9630A648870057FF09 /* EPGMatchSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40418B9530A648870057FF09 /* EPGMatchSheet.swift */; };
 		48AFFA51E5BE10FB630A0D0C /* SettingsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FDD13666BD2B6179C229279 /* SettingsPanel.swift */; };
 		4D045DCD26D669C900D4D816 /* Makefile in Resources */ = {isa = PBXBuildFile; fileRef = 4D045DCC26D669C900D4D816 /* Makefile */; };
 		4D0CFED024278D0900264B83 /* UpdateMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D0CFECF24278D0900264B83 /* UpdateMenu.swift */; };
@@ -69,7 +70,8 @@
 /* Begin PBXFileReference section */
 		047F0E3282CF9B9123EB3A5D /* ChannelIconView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChannelIconView.swift; sourceTree = "<group>"; };
 		15535C235F13F4528AD3731E /* PlaybackStatus.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PlaybackStatus.swift; sourceTree = "<group>"; };
-		40418B9330A643120057FF09 /* EPGGuide.swift */ = {isa = PBXFileReference; path = EPGGuide.swift; sourceTree = "<group>"; };
+		40418B9330A643120057FF09 /* EPGGuide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EPGGuide.swift; sourceTree = "<group>"; };
+		40418B9530A648870057FF09 /* EPGMatchSheet.swift */ = {isa = PBXFileReference; path = EPGMatchSheet.swift; sourceTree = "<group>"; };
 		4D045DCC26D669C900D4D816 /* Makefile */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = Makefile; sourceTree = SOURCE_ROOT; };
 		4D0CFECF24278D0900264B83 /* UpdateMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateMenu.swift; sourceTree = "<group>"; };
 		4D0CFED124278D8400264B83 /* InstallDockerMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallDockerMenu.swift; sourceTree = "<group>"; };
@@ -218,6 +220,7 @@
 				CF312CA4581E9C54EA3D9F1E /* BulkLinkEditor.swift */,
 				89320B227DDC37B57B6DF580 /* ChannelsWindowController.swift */,
 				40418B9330A643120057FF09 /* EPGGuide.swift */,
+				40418B9530A648870057FF09 /* EPGMatchSheet.swift */,
 			);
 			path = Channels;
 			sourceTree = "<group>";
@@ -366,6 +369,7 @@
 				8013427A04D2059C577EF22C /* TVShare.swift in Sources */,
 				B4FDA7FD80CCE580EF66B85F /* LinkChecker.swift in Sources */,
 				9EA0DD7D1261E0CE76E55FE1 /* BulkLinkEditor.swift in Sources */,
+				40418B9630A648870057FF09 /* EPGMatchSheet.swift in Sources */,
 				32C0103F5667E6198C404080 /* ChannelsWindowController.swift in Sources */,
 				4D9442722722EAA800D11C91 /* SelectPlayerMenu.swift in Sources */,
 				4D94427627259F4E00D11C91 /* StreamFile.swift in Sources */,

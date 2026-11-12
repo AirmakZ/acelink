@@ -30,7 +30,6 @@ struct SettingsPanel: View {
         .frame(width: 400)
         .onAppear {
             urlText = remote.urlString
-            guideURLText = epg.urlString
             // Opened to set the first address (e.g. by picking Remote): type right away.
             if remote.urlString.isEmpty { urlFieldFocused = true }
         }
@@ -108,21 +107,18 @@ struct SettingsPanel: View {
         guideURLText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Empty is allowed: it goes back to the default guide.
-    private var isValidGuideURL: Bool {
-        trimmedGuideURL.isEmpty || RemoteList.validURL(trimmedGuideURL) != nil
-    }
-
-    private var guideURLChanged: Bool {
-        (trimmedGuideURL.isEmpty ? EPGGuide.defaultURL : trimmedGuideURL) != epg.urlString
+    private var canAddGuide: Bool {
+        RemoteList.validURL(trimmedGuideURL) != nil
+            && !epg.sources.contains { $0.url == trimmedGuideURL }
     }
 
     private var guideSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("TV Guide").font(.headline)
-            Text("An XMLTV guide (.xml or .xml.gz) sent with the Share to TV playlist. " +
-                "Channels are matched to it by name; set a channel's guide ID to choose " +
-                "another. Empty uses EPG dobleM (Spain).")
+            Text("XMLTV guides (.xml or .xml.gz) sent with the Share to TV playlist. Channels " +
+                "are matched by name in these guides in order, so later ones fill in what " +
+                "earlier ones lack; a name tagged with a country, like (DE), looks in that " +
+                "country's guide first. Right-click a link and choose Match EPG to pick another.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -130,49 +126,95 @@ struct SettingsPanel: View {
                 get: { epg.isEnabled },
                 set: { epg.setEnabled($0) }
             ))
-            HStack {
-                TextField(EPGGuide.defaultURL, text: $guideURLText)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(saveGuideURL)
-                Button("Save", action: saveGuideURL)
-                    .disabled(!isValidGuideURL || !guideURLChanged)
-            }
-            .disabled(!epg.isEnabled)
             if epg.isEnabled {
-                Group {
-                    if !isValidGuideURL {
-                        Text("Enter an address starting with http:// or https://.")
-                            .foregroundColor(.red)
-                    } else if !guideURLChanged {
-                        guideStatus
+                VStack(spacing: 0) {
+                    ForEach(Array(epg.sources.enumerated()), id: \.element.id) { index, source in
+                        if index > 0 { Divider() }
+                        sourceRow(source, index: index)
                     }
                 }
-                .font(.caption)
+                .background(RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(nsColor: .separatorColor)))
+                HStack {
+                    TextField("https://…/guide.xml.gz", text: $guideURLText)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(addGuide)
+                    Menu("Suggested") {
+                        ForEach(EPGGuide.suggestedSources, id: \.url) { suggestion in
+                            Button(suggestion.name) { epg.addSource(suggestion.url) }
+                                .disabled(epg.sources.contains { $0.url == suggestion.url })
+                        }
+                    }
+                    .fixedSize()
+                    Button("Add", action: addGuide).disabled(!canAddGuide)
+                }
+                HStack {
+                    Text(epg.isUpdating ? "Downloading guides…" : matchedText)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Update Now") { epg.refresh() }
+                        .controlSize(.small)
+                        .disabled(epg.isUpdating || !epg.sources.contains(where: \.isEnabled))
+                }
             }
         }
     }
 
-    @ViewBuilder
-    private var guideStatus: some View {
-        switch epg.state {
-        case .loading:
-            Text("Downloading the guide…").foregroundColor(.secondary)
-        case let .updated(date):
-            HStack {
-                Text("Updated at \(date.formatted(date: .omitted, time: .shortened)). " +
-                    matchedText)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                Button("Update Now") { epg.refresh() }
-                    .controlSize(.small)
+    /// A source: on/off, its place in the order, name, state, move and remove buttons.
+    private func sourceRow(_ source: EPGSource, index: Int) -> some View {
+        HStack(spacing: 8) {
+            Toggle("", isOn: Binding(
+                get: { source.isEnabled },
+                set: { epg.setSource(source.id, enabled: $0) }
+            ))
+            .labelsHidden()
+            .toggleStyle(.checkbox)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(index + 1). \(source.label)").lineLimit(1)
+                Text(sourceStatus(source))
+                    .font(.caption)
+                    .foregroundColor(sourceFailed(source) ? .red : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-        case .failed:
-            Text("Could not update: \(epg.failure ?? "unknown error").")
-                .foregroundColor(.red)
-                .fixedSize(horizontal: false, vertical: true)
-        case .idle:
-            EmptyView()
+            .help("\(source.url)\n\(sourceStatus(source))")
+            Spacer()
+            Button { epg.moveSource(source.id, by: -1) } label: { Image(systemName: "chevron.up") }
+                .disabled(index == 0)
+                .help("Look in this guide earlier")
+            Button { epg.moveSource(source.id, by: 1) } label: { Image(systemName: "chevron.down") }
+                .disabled(index == epg.sources.count - 1)
+                .help("Look in this guide later")
+            Button { epg.removeSource(source.id) } label: { Image(systemName: "minus.circle") }
+                .help("Remove this guide")
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+    }
+
+    private func sourceFailed(_ source: EPGSource) -> Bool {
+        if case .failed = epg.states[source.id] { return true }
+        return false
+    }
+
+    /// "612 channels · updated at 20:30", "Downloading…", "Could not update: …"
+    private func sourceStatus(_ source: EPGSource) -> String {
+        let channels = epg.guides[source.id].map { "\($0.channelCount) channels" }
+        switch epg.states[source.id] {
+        case .loading:
+            return "Downloading…"
+        case let .updated(date):
+            return [channels, "updated at \(date.formatted(date: .omitted, time: .shortened))"]
+                .compactMap { $0 }.joined(separator: " · ")
+        case let .failed(message):
+            return "Could not update: \(message)." + (channels != nil ? " Using the saved copy." : "")
+        case nil:
+            return source.isEnabled ? (channels ?? "Not downloaded yet") : "Off"
         }
     }
 
@@ -182,10 +224,10 @@ struct SettingsPanel: View {
         return "\(epg.matchedCount(of: channels)) of \(channels.count) channels have a guide."
     }
 
-    private func saveGuideURL() {
-        guard isValidGuideURL, guideURLChanged else { return }
-        epg.setURL(trimmedGuideURL)
-        guideURLText = epg.urlString
+    private func addGuide() {
+        guard canAddGuide else { return }
+        epg.addSource(trimmedGuideURL)
+        guideURLText = ""
     }
 
     private var channelsSection: some View {

@@ -863,6 +863,7 @@ struct ChannelDetailView: View {
     @ObservedObject var checker: LinkChecker
     @ObservedObject var transfers = TransferMonitor.shared
     @ObservedObject var nowPlaying = NowPlaying.shared
+    @ObservedObject var epg = EPGGuide.shared
     let actions: PlaybackActions
     let onPlay: (StreamLink) -> Void
     let onEditChannel: () -> Void
@@ -870,6 +871,8 @@ struct ChannelDetailView: View {
     let onBulkAdd: () -> Void
 
     @State private var selection = Set<UUID>()
+    /// The link whose TV guide is being picked ("Match EPG…").
+    @State private var matchingLink: StreamLink?
     /// Where a ⇧-click range starts.
     @State private var anchor: UUID?
 
@@ -986,6 +989,9 @@ struct ChannelDetailView: View {
                             lastRate: link.stream.flatMap { transfers.lastRates[$0.hash.lowercased()] },
                             viewers: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.viewers ?? [],
                             connecting: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.connecting,
+                            guide: epg.guideChannel(channel: channel, link: link),
+                            guideChosen: epg.choice(for: link) != .automatic,
+                            onMatchGuide: { matchingLink = link },
                             onStop: { actions.stopLink(link.id) },
                             onPlay: {
                                 if NSEvent.modifierFlags.contains(.option) {
@@ -1045,6 +1051,10 @@ struct ChannelDetailView: View {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(link.url, forType: .string)
                             }
+                            if epg.isEnabled {
+                                Button("Match EPG…") { matchingLink = link }
+                                    .disabled(!epg.hasGuide || link.stream == nil)
+                            }
                             if readOnly {
                                 Menu("Copy to Local") {
                                     ForEach(ChannelStore.shared.channels) { local in
@@ -1081,6 +1091,9 @@ struct ChannelDetailView: View {
                 }
                 .listStyle(.inset)
                 .background(OutsideClickMonitor { selection = [] })
+                .sheet(item: $matchingLink) { link in
+                    EPGMatchSheet(channel: channel, link: link) { matchingLink = nil }
+                }
             }
         }
     }
@@ -1198,10 +1211,16 @@ struct LinkRow: View {
     let viewers: [Viewer]
     /// What's going on while it connects; nil once it plays.
     let connecting: String?
+    /// The TV guide channel it's sent with, if any.
+    let guide: GuideRef?
+    /// Picked with "Match EPG…" rather than matched by name.
+    let guideChosen: Bool
+    let onMatchGuide: () -> Void
     let onStop: () -> Void
     let onPlay: () -> Void
 
     @StateObject private var hover = HoverState()
+    @State private var showsGuide = false
 
     /// The dot follows the last live rate when there is one, as it is newer than the check
     /// and video did arrive. A check still running keeps its spinner.
@@ -1248,6 +1267,23 @@ struct LinkRow: View {
                     Text(link.shortHash)
                         .font(.system(.caption, design: .monospaced))
                         .foregroundColor(link.stream == nil ? .red : .secondary)
+                    if let guide = guide {
+                        Button { showsGuide.toggle() } label: {
+                            Image(systemName: guideChosen ? "calendar.badge.checkmark" : "calendar")
+                                .font(.caption2)
+                                .foregroundColor(showsGuide ? .accentColor : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("TV guide: \(guide.id)\(guideChosen ? " (chosen)" : ""). " +
+                            "Click to see what's on.")
+                        .accessibilityLabel("TV guide: \(guide.id)")
+                        .popover(isPresented: $showsGuide, arrowEdge: .bottom) {
+                            EPGInfoView(ref: guide, chosen: guideChosen) {
+                                showsGuide = false
+                                onMatchGuide()
+                            }
+                        }
+                    }
                     // While live figures show on the right, the check's data stays hidden.
                     if rate == nil {
                         SpeedLabel(availability: availability, peers: peers, lastLive: lastRate)

@@ -42,12 +42,44 @@ final class RemoteList: ObservableObject {
 
     private static var cacheURL: URL { ChannelStore.baseDir.appendingPathComponent("remote.m3u") }
 
+    private static let autoUpdateKey = "remoteListAutoUpdateMinutes"
+
+    /// The choices of the settings' "Update every" menu, in minutes; 0 is never.
+    static let autoUpdateChoices = [0, 5, 15, 30, 60, 180]
+
+    /// How often the list is downloaded again while the app runs, in minutes; 0 is never.
+    @Published private(set) var autoUpdateMinutes = UserDefaults.standard
+        .integer(forKey: autoUpdateKey)
+
+    private var autoUpdateTimer: Timer?
+
+    /// Call on the main thread: the auto-update timer runs on the main run loop.
     private init() {
         if let data = try? Data(contentsOf: Self.cacheURL),
            let text = String(data: data, encoding: .utf8) {
             store.channels = Self.parse(text)
         }
         refresh()
+        scheduleAutoUpdate()
+    }
+
+    /// Saves how often to update the list and restarts the timer with it.
+    func setAutoUpdate(minutes: Int) {
+        autoUpdateMinutes = max(0, minutes)
+        UserDefaults.standard.set(autoUpdateMinutes, forKey: Self.autoUpdateKey)
+        scheduleAutoUpdate()
+    }
+
+    private func scheduleAutoUpdate() {
+        autoUpdateTimer?.invalidate()
+        autoUpdateTimer = nil
+        guard autoUpdateMinutes > 0 else { return }
+        let timer = Timer(timeInterval: TimeInterval(autoUpdateMinutes * 60), repeats: true) {
+            [weak self] _ in self?.refresh()
+        }
+        timer.tolerance = 30
+        RunLoop.main.add(timer, forMode: .common)
+        autoUpdateTimer = timer
     }
 
     /// Saves the address and loads the list from it. An empty address just clears it.
@@ -56,6 +88,8 @@ final class RemoteList: ObservableObject {
         UserDefaults.standard.set(urlString, forKey: Self.urlKey)
         state = .idle
         refresh()
+        // Count the next automatic update from this download.
+        scheduleAutoUpdate()
     }
 
     func refresh() {

@@ -56,7 +56,28 @@ struct SettingsPanel: View {
                 }
             }
             .font(.caption)
+            Picker("Update every", selection: Binding(
+                get: { remote.autoUpdateMinutes },
+                set: { remote.setAutoUpdate(minutes: $0) }
+            )) {
+                ForEach(RemoteList.autoUpdateChoices, id: \.self) { minutes in
+                    Text(Self.intervalName(minutes)).tag(minutes)
+                }
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+            .disabled(remote.url == nil)
         }
+    }
+
+    /// "Never", "5 minutes", "1 hour"…
+    private static func intervalName(_ minutes: Int) -> String {
+        guard minutes > 0 else { return "Never" }
+        if minutes % 60 == 0 {
+            let hours = minutes / 60
+            return "\(hours) hour\(hours == 1 ? "" : "s")"
+        }
+        return "\(minutes) minutes"
     }
 
     @ViewBuilder

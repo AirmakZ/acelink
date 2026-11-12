@@ -98,7 +98,7 @@ struct BulkLinkEditor: View {
             }
             seen.insert(hash)
             if link.name.isEmpty {
-                link.name = "Link \(existingLinks.count + links.count + 1)"
+                link.name = "Channel \(existingLinks.count + links.count + 1)"
             }
             links.append(link)
         }
@@ -109,7 +109,7 @@ struct BulkLinkEditor: View {
         let preview = self.preview
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("Add Links in Bulk").font(.headline)
+            Text("Add Channels in Bulk").font(.headline)
             Text("Paste one link per line. You can put a name on the same line, " +
                 "e.g. “HD Spanish acestream://…”. M3U playlists work too.")
                 .font(.caption)
@@ -159,7 +159,7 @@ struct BulkLinkEditor: View {
                 }
                 Spacer()
                 Button("Cancel", action: onCancel).keyboardShortcut(.cancelAction)
-                Button("Add \(preview.links.count) Link\(preview.links.count == 1 ? "" : "s")") {
+                Button("Add \(preview.links.count) Channel\(preview.links.count == 1 ? "" : "s")") {
                     onAdd(preview.links)
                 }
                 .keyboardShortcut(.defaultAction)

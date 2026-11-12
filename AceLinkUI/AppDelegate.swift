@@ -431,8 +431,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if channel.links.isEmpty {
             status.set(.failed(singleLink
-                ? "This link is playing. Checking it now would interrupt it."
-                : "All links of this channel are playing. Checking them would interrupt them."))
+                ? "This channel is playing. Checking it now would interrupt it."
+                : "All channels of this group are playing. Checking them would interrupt them."))
             return
         }
         if !playing.isEmpty {
@@ -461,7 +461,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if !reuseEngine {
                 let count = channel.links.count
-                self.status.set(.working("Checking \(count) link\(count == 1 ? "" : "s")…"))
+                self.status.set(.working("Checking \(count) channel\(count == 1 ? "" : "s")…"))
             }
             let maxConcurrent = playing.isEmpty ? Int.max : LinkChecker.concurrencyWhilePlaying
             self.checker.run(channel: channel, maxConcurrent: maxConcurrent) { outcome in
@@ -983,7 +983,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 channel.links.first { $0.stream?.hash.lowercased() == hash }
                     .map { (channel, $0, source) }
             }.first
-            let linkName = match.map { $0.1.name.isEmpty ? "Untitled link" : $0.1.name }
+            let linkName = match.map { $0.1.name.isEmpty ? "Untitled channel" : $0.1.name }
             return ActiveStream(
                 hash: hash,
                 name: linkName ?? names[hash] ?? String(hash.prefix(7)),

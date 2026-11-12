@@ -57,7 +57,7 @@ private struct LinkDragPreview: View {
         ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(shown.enumerated()), id: \.offset) { _, name in
-                    Text(name.isEmpty ? "Untitled link" : name)
+                    Text(name.isEmpty ? "Untitled channel" : name)
                         .lineLimit(1)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
@@ -400,12 +400,12 @@ struct ChannelsView: View {
             ),
             presenting: ui.channelPendingDelete
         ) { channel in
-            Button("Delete Channel", role: .destructive) {
+            Button("Delete Group", role: .destructive) {
                 if ui.selection == channel.id { ui.selection = nil }
                 store.delete(channelID: channel.id)
             }
         } message: { channel in
-            Text("The channel and its \(channel.links.count) link(s) will be removed.")
+            Text("The group and its \(channel.links.count) channel(s) will be removed.")
         }
         .onAppear {
             if ui.selection == nil { ui.selection = current.channels.first?.id }
@@ -530,7 +530,7 @@ struct ChannelsView: View {
                 do {
                     try store.exportData().write(to: url, options: .atomic)
                 } catch {
-                    NSAlert.error("Could not export the channels: \(error.localizedDescription)")
+                    NSAlert.error("Could not export the groups: \(error.localizedDescription)")
                 }
             }
         }
@@ -553,13 +553,13 @@ struct ChannelsView: View {
                 } catch {
                     NSAlert.warning(
                         messageText: "Can't import this file",
-                        informativeText: "It isn't a list of channels exported from AceLinkUI."
+                        informativeText: "It isn't a list of groups exported from AceLinkUI."
                     )
                     return
                 }
                 guard !backup.channels.isEmpty else {
                     NSAlert.warning(messageText: "Nothing to import",
-                                    informativeText: "The file has no channels.")
+                                    informativeText: "The file has no groups.")
                     return
                 }
                 guard let replacing = askHowToImport(backup) else { return }
@@ -576,8 +576,8 @@ struct ChannelsView: View {
         let count = backup.channels.count
         let current = store.channels.count
         let alert = NSAlert()
-        alert.messageText = "Import \(count) channel\(count == 1 ? "" : "s")?"
-        alert.informativeText = "Add them after your \(current) channel\(current == 1 ? "" : "s"), " +
+        alert.messageText = "Import \(count) group\(count == 1 ? "" : "s")?"
+        alert.informativeText = "Add them after your \(current) group\(current == 1 ? "" : "s"), " +
             "or replace yours with them. Replacing can't be undone."
         alert.addButton(withTitle: "Add")
         let replace = alert.addButton(withTitle: "Replace")
@@ -604,7 +604,7 @@ struct ChannelsView: View {
             } label: {
                 Label(iconsOnly ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left")
             }
-            .help(iconsOnly ? "Show the channel names" : "Show only the channel icons")
+            .help(iconsOnly ? "Show the group names" : "Show only the group icons")
         }
     }
 
@@ -629,26 +629,26 @@ struct ChannelsView: View {
                 Label("Check Availability", systemImage: "antenna.radiowaves.left.and.right")
             }
             .disabled(channel.links.isEmpty || checker.isRunning || status.isBusy)
-            .help("Check Availability: test every link at the same time. "
-                + "Working links move to the top.")
+            .help("Check Availability: test every channel at the same time. "
+                + "Working channels move to the top.")
         }
     }
 
     private func addMenu(for channel: Channel) -> some View {
         Menu {
-            Button("Add Link…") {
+            Button("Add Channel…") {
                 let draft = LinkEditor.draftFromClipboard(
-                    defaultName: "Link \(channel.links.count + 1)"
+                    defaultName: "Channel \(channel.links.count + 1)"
                 )
                 ui.editingLink = LinkEditTarget(channelID: channel.id, link: draft, isNew: true)
             }
             Button("Add in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
             Divider()
-            Button("Edit Channel…") { ui.editingChannel = channel }
+            Button("Edit Group…") { ui.editingChannel = channel }
         } label: {
             Label("Add", systemImage: "plus")
         }
-        .help("Add links to this channel")
+        .help("Add channels to this group")
     }
 
     private var tvColor: Color {
@@ -686,10 +686,10 @@ struct ChannelsView: View {
                 Button {
                     ui.editingChannel = Channel(name: "")
                 } label: {
-                    Label("New Channel", systemImage: "plus").labelStyle(.iconOnly)
+                    Label("New Group", systemImage: "plus").labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
-                .help("New Channel")
+                .help("New Group")
             }
         } else {
             fullNewChannelBar
@@ -704,7 +704,7 @@ struct ChannelsView: View {
                 Button {
                     ui.editingChannel = Channel(name: "")
                 } label: {
-                    Label("New Channel", systemImage: "plus")
+                    Label("New Group", systemImage: "plus")
                 }
                 .buttonStyle(.borderless)
             }
@@ -777,19 +777,19 @@ struct ChannelsView: View {
                 )
                 .contextMenu {
                     if !showRemote {
-                        Button("Edit Channel…") { ui.editingChannel = channel }
-                        Button("Add Link…") {
+                        Button("Edit Group…") { ui.editingChannel = channel }
+                        Button("Add Channel…") {
                             ui.editingLink = LinkEditTarget(
                                 channelID: channel.id, link: LinkEditor.draftFromClipboard(), isNew: true
                             )
                         }
-                        Button("Add Links in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
+                        Button("Add Channels in Bulk…") { ui.bulkAdd = BulkAddTarget(id: channel.id) }
                     }
                     Button("Check Availability") { actions.checkAvailability(channel.id) }
                         .disabled(channel.links.isEmpty || checker.isRunning || status.isBusy)
                     if !showRemote {
                         Divider()
-                        Button("Delete Channel…") { ui.channelPendingDelete = channel }
+                        Button("Delete Group…") { ui.channelPendingDelete = channel }
                     }
                 }
             }
@@ -817,7 +817,7 @@ struct ChannelsView: View {
                 }
             VStack(alignment: .leading, spacing: 1) {
                 Text(channel.name).lineLimit(1)
-                Text("\(channel.links.count) link\(channel.links.count == 1 ? "" : "s")")
+                Text("\(channel.links.count) channel\(channel.links.count == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -833,7 +833,7 @@ struct ChannelsView: View {
             Image(systemName: "tv")
                 .font(.system(size: 44))
                 .foregroundColor(.secondary)
-            Text(current.channels.isEmpty ? "No channels yet" : "Select a channel")
+            Text(current.channels.isEmpty ? "No groups yet" : "Select a group")
                 .font(.title2)
             if showRemote {
                 if current.channels.isEmpty {
@@ -841,9 +841,9 @@ struct ChannelsView: View {
                         .foregroundColor(.secondary)
                 }
             } else if store.channels.isEmpty {
-                Text("Create a channel, then add one or more AceStream links to it.")
+                Text("Create a group, then add one or more AceStream channels to it.")
                     .foregroundColor(.secondary)
-                Button("New Channel") { ui.editingChannel = Channel(name: "") }
+                Button("New Group") { ui.editingChannel = Channel(name: "") }
                     .controlSize(.large)
                     .keyboardShortcut("n")
             }
@@ -944,9 +944,9 @@ struct ChannelDetailView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.borderless)
-                .help("Edit Channel")
+                .help("Edit Group")
             }
-            Text("\(channel.links.count) link\(channel.links.count == 1 ? "" : "s")")
+            Text("\(channel.links.count) channel\(channel.links.count == 1 ? "" : "s")")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .padding(.leading, 6)
@@ -963,12 +963,12 @@ struct ChannelDetailView: View {
         VStack(spacing: 0) {
             if channel.links.isEmpty {
                 VStack(spacing: 10) {
-                    Text("No links in this channel").font(.title3)
+                    Text("No channels in this group").font(.title3)
                     if !readOnly {
                         Text("Add an AceStream link (hash, acestream:// or magnet:).")
                             .foregroundColor(.secondary)
                         HStack {
-                            Button("Add Link", action: addLink)
+                            Button("Add Channel", action: addLink)
                             Button("Add in Bulk…", action: onBulkAdd)
                         }
                     }
@@ -1041,7 +1041,7 @@ struct ChannelDetailView: View {
                                 .disabled(link.stream == nil || checker.isRunning || status.isBusy)
                             Divider()
                             if !readOnly {
-                                Button("Edit Link…") {
+                                Button("Edit Channel…") {
                                     onEditLink(
                                         LinkEditTarget(channelID: channel.id, link: link, isNew: false)
                                     )
@@ -1065,7 +1065,7 @@ struct ChannelDetailView: View {
                             }
                             if !readOnly {
                                 Divider()
-                                Button("Delete Link") {
+                                Button("Delete Channel") {
                                     store.delete(linkID: link.id, in: channel.id)
                                 }
                             }
@@ -1103,13 +1103,13 @@ struct ChannelDetailView: View {
     @ViewBuilder
     private var shortcuts: some View {
         if !readOnly {
-            Button("Add Link", action: addLink).keyboardShortcut("l")
+            Button("Add Channel", action: addLink).keyboardShortcut("l")
             Button("Add in Bulk…", action: onBulkAdd).keyboardShortcut("l", modifiers: [.command, .shift])
         }
     }
 
     private func addLink() {
-        let draft = LinkEditor.draftFromClipboard(defaultName: "Link \(channel.links.count + 1)")
+        let draft = LinkEditor.draftFromClipboard(defaultName: "Channel \(channel.links.count + 1)")
         onEditLink(LinkEditTarget(channelID: channel.id, link: draft, isNew: true))
     }
 }
@@ -1261,7 +1261,7 @@ struct LinkRow: View {
             AvailabilityDot(availability: dotAvailability, previous: link.lastResult)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(link.name.isEmpty ? "Untitled link" : link.name)
+                Text(link.name.isEmpty ? "Untitled channel" : link.name)
                     .fontWeight(isLoading || isPlaying ? .semibold : .regular)
                 HStack(spacing: 6) {
                     Text(link.shortHash)
@@ -1360,7 +1360,7 @@ struct TransferRateLabel: View {
 
 // MARK: - Status bar
 
-/// Shared height of the bars along the bottom of the window (the sidebar's "New Channel" and
+/// Shared height of the bars along the bottom of the window (the sidebar's "New Group" and
 /// the status bar), so their edges line up.
 enum BottomBar {
     static let rowHeight: CGFloat = 36

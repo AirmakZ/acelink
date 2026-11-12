@@ -850,7 +850,7 @@ final class TVShare: ObservableObject {
             }
             for link in channel.links where !hidden.contains(link.id) {
                 guard let stream = link.stream else { continue }
-                let name = clean(link.name.isEmpty ? "Link" : link.name)
+                let name = clean(link.name.isEmpty ? "Channel" : link.name)
                 let url = "http://\(host):\(port)/play/\(stream.param)/\(stream.hash).m3u8"
                 let tvgID = EPGGuide.shared.tvgID(for: link)
                     .map { " tvg-id=\"\(clean($0))\"" } ?? ""

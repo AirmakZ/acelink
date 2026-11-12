@@ -69,7 +69,7 @@ struct LinkEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(isNew ? "Add Link" : "Edit Link").font(.headline)
+            Text(isNew ? "Add Channel" : "Edit Channel").font(.headline)
 
             Form {
                 TextField("Name", text: $draft.link.name, prompt: Text("e.g. HD Spanish"))
@@ -89,7 +89,7 @@ struct LinkEditor: View {
 
             let duplicates = self.duplicates
             if let existing = duplicates.sameChannel {
-                Label("This channel already has this link"
+                Label("This group already has this link"
                     + (existing.name.isEmpty ? "." : " as “\(existing.name)”."),
                     systemImage: "xmark.octagon")
                     .foregroundColor(.red)

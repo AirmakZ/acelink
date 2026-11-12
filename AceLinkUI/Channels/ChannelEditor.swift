@@ -76,11 +76,11 @@ struct ChannelEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(isNew ? "New Channel" : "Edit Channel").font(.headline)
+            Text(isNew ? "New Group" : "Edit Group").font(.headline)
 
             HStack(spacing: 14) {
                 ChannelIconView(icon: draft.icon, size: 56)
-                TextField("Channel name", text: $draft.channel.name)
+                TextField("Group name", text: $draft.channel.name)
                     .textFieldStyle(.roundedBorder)
                     .font(.title3)
             }
@@ -174,7 +174,7 @@ struct ChannelEditor: View {
 
     private func chooseImage() {
         let panel = NSOpenPanel()
-        panel.message = "Choose an image for this channel"
+        panel.message = "Choose an image for this group"
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url,

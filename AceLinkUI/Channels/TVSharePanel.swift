@@ -59,11 +59,11 @@ struct TVSharePanel: View {
 
     private var hideDeadLinksToggle: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Toggle("Hide links that failed the last check", isOn: $tv.hideDeadLinks)
+            Toggle("Hide channels that failed the last check", isOn: $tv.hideDeadLinks)
             Text(tv.hideDeadLinks && hiddenCount > 0
-                ? "\(hiddenCount) red link\(hiddenCount == 1 ? " is" : "s are") hidden from the TV. " +
-                "Check the channel again to bring back links that work again."
-                : "Red links from Check Availability are left out of the TV playlist.")
+                ? "\(hiddenCount) red channel\(hiddenCount == 1 ? " is" : "s are") hidden from the TV. " +
+                "Check the group again to bring back channels that work again."
+                : "Red channels from Check Availability are left out of the TV playlist.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -34,7 +34,7 @@ struct EPGMatchSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Match EPG").font(.headline)
-                Text(link.name.isEmpty ? "Untitled link" : link.name)
+                Text(link.name.isEmpty ? "Untitled channel" : link.name)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -61,7 +61,7 @@ struct EPGMatchSheet: View {
                 .foregroundColor(.secondary)
             HStack {
                 Button("Automatic") { choose(.automatic) }
-                    .help("Match the guide by the link's name")
+                    .help("Match the guide by the channel's name")
                 Button("No Guide") { choose(.none) }
                 Spacer()
                 Button("Cancel", action: onDone).keyboardShortcut(.cancelAction)

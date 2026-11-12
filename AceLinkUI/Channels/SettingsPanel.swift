@@ -118,7 +118,7 @@ struct SettingsPanel: View {
             Text("XMLTV guides (.xml or .xml.gz) sent with the Share to TV playlist. Channels " +
                 "are matched by name in these guides in order, so later ones fill in what " +
                 "earlier ones lack; a name tagged with a country, like (DE), looks in that " +
-                "country's guide first. Links are matched by their own name; right-click one " +
+                "country's guide first. Right-click a channel " +
                 "and choose Match EPG to pick another.")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -219,10 +219,10 @@ struct SettingsPanel: View {
         }
     }
 
-    /// "320 of 432 links have a guide."
+    /// "320 of 432 channels have a guide."
     private var matchedText: String {
         let links = (store.channels + remote.store.channels).flatMap(\.links)
-        return "\(epg.matchedCount(of: links)) of \(links.count) links have a guide."
+        return "\(epg.matchedCount(of: links)) of \(links.count) channels have a guide."
     }
 
     private func addGuide() {
@@ -233,9 +233,9 @@ struct SettingsPanel: View {
 
     private var channelsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("My Channels").font(.headline)
+            Text("My Groups").font(.headline)
             Text("\(countText). Export them to a file to keep a copy or move them to " +
-                "another Mac; importing adds a file's channels or replaces yours.")
+                "another Mac; importing adds a file's groups or replaces yours.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -250,7 +250,7 @@ struct SettingsPanel: View {
     private var countText: String {
         let channels = store.channels.count
         let links = store.channels.reduce(0) { $0 + $1.links.count }
-        return "\(channels) channel\(channels == 1 ? "" : "s"), \(links) link\(links == 1 ? "" : "s")"
+        return "\(channels) group\(channels == 1 ? "" : "s"), \(links) channel\(links == 1 ? "" : "s")"
     }
 
     private func saveURL() {

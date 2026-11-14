@@ -42,6 +42,20 @@ final class RemoteList: ObservableObject {
 
     private static var cacheURL: URL { ChannelStore.baseDir.appendingPathComponent("remote.m3u") }
 
+    /// What checks and playing found out about each stream of the list, by hash. Kept apart
+    /// from the m3u, which is read again on every update.
+    private struct LinkHistory: Codable {
+        var lastSeen: Date?
+        var lastResult: Availability?
+        var lastPeers: Int?
+    }
+
+    private static var historyURL: URL {
+        ChannelStore.baseDir.appendingPathComponent("remote-links.json")
+    }
+
+    private var history: [String: LinkHistory] = [:]
+
     private static let autoUpdateKey = "remoteListAutoUpdateMinutes"
 
     /// The choices of the settings' "Update every" menu, in minutes; 0 is never.
@@ -55,9 +69,12 @@ final class RemoteList: ObservableObject {
 
     /// Call on the main thread: the auto-update timer runs on the main run loop.
     private init() {
+        if let data = try? Data(contentsOf: Self.historyURL) {
+            history = (try? JSONDecoder().decode([String: LinkHistory].self, from: data)) ?? [:]
+        }
         if let data = try? Data(contentsOf: Self.cacheURL),
            let text = String(data: data, encoding: .utf8) {
-            store.channels = Self.parse(text)
+            store.channels = withHistory(Self.parse(text))
         }
         refresh()
         scheduleAutoUpdate()
@@ -114,13 +131,48 @@ final class RemoteList: ObservableObject {
                 )
                 // The address changed while downloading: this answer is for the old one.
                 guard url == self.url else { return }
-                store.channels = channels
+                store.channels = withHistory(channels)
                 try? data.write(to: Self.cacheURL, options: .atomic)
                 state = .updated(Date())
             } catch {
                 os_log("Cannot update the remote list: %{public}@", error.localizedDescription)
                 if url == self.url { state = .failed(error.localizedDescription) }
             }
+        }
+    }
+
+    /// The list's links with what was found out about their streams before.
+    private func withHistory(_ channels: [Channel]) -> [Channel] {
+        channels.map { channel in
+            var channel = channel
+            for index in channel.links.indices {
+                guard let hash = channel.links[index].stream?.hash.lowercased(),
+                      let saved = history[hash] else { continue }
+                channel.links[index].lastSeen = saved.lastSeen
+                channel.links[index].lastResult = saved.lastResult
+                channel.links[index].lastPeers = saved.lastPeers
+            }
+            return channel
+        }
+    }
+
+    /// Saves what the list's links know now, after a check result or a link played. Streams
+    /// that left the list keep theirs, in case they come back.
+    func saveHistory() {
+        for link in store.channels.flatMap(\.links) {
+            guard let hash = link.stream?.hash.lowercased(),
+                  link.lastSeen != nil || link.lastResult != nil else { continue }
+            history[hash] = LinkHistory(
+                lastSeen: link.lastSeen, lastResult: link.lastResult, lastPeers: link.lastPeers
+            )
+        }
+        do {
+            try FileManager.default.createDirectory(
+                at: ChannelStore.baseDir, withIntermediateDirectories: true
+            )
+            try JSONEncoder().encode(history).write(to: Self.historyURL, options: .atomic)
+        } catch {
+            os_log("Cannot save remote-links.json: %{public}@", error.localizedDescription)
         }
     }
 

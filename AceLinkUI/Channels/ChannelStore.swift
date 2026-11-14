@@ -182,6 +182,22 @@ final class ChannelStore: ObservableObject {
             .map(\.element)
     }
 
+    /// Records that a stream delivered video now, in the user's channels and the remote list.
+    /// Call on the main thread.
+    static func markSeenEverywhere(hash: String) {
+        shared.markSeen(hash: hash)
+        RemoteList.shared.store.markSeen(hash: hash)
+        RemoteList.shared.saveHistory()
+    }
+
+    /// Saves a check result in the user's channels and the remote list. Call on the main
+    /// thread.
+    static func recordEverywhere(_ result: Availability, peers: Int? = nil, hash: String) {
+        shared.record(result, peers: peers, hash: hash)
+        RemoteList.shared.store.record(result, peers: peers, hash: hash)
+        RemoteList.shared.saveHistory()
+    }
+
     /// Records that a stream delivered video now, on every link that points to it.
     func markSeen(hash: String, at date: Date = Date()) {
         updateLinks(hash: hash) { $0.lastSeen = date }

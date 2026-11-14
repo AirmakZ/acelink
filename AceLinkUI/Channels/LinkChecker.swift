@@ -229,7 +229,7 @@ final class LinkChecker: ObservableObject {
                         self.peers[id] = peers
                         if let hash = links.first(where: { $0.id == id })?.stream?.hash {
                             TransferMonitor.shared.forgetLastRate(hash: hash)
-                            ChannelStore.shared.record(result, peers: peers, hash: hash)
+                            ChannelStore.recordEverywhere(result, peers: peers, hash: hash)
                         }
                     }
                 }

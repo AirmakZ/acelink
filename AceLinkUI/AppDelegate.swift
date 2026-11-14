@@ -662,7 +662,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if stats.status == "dl", stats.streamStatus == 1,
                    downloaded - (firstDownloaded ?? downloaded) >= 1_048_576 {
                     os_log("Playing %{public}@ fine; updating last seen.", String(hash.prefix(7)))
-                    await MainActor.run { ChannelStore.shared.markSeen(hash: hash) }
+                    await MainActor.run { ChannelStore.markSeenEverywhere(hash: hash) }
                     return
                 }
             }
@@ -700,7 +700,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 stream.title = "\(title) [\(stream.hash.prefix(7))]"
                 // The session's playlist listed video segments: the link plays. (Its stats
                 // can't tell: an HLS session's stream_status stays -1 while it's read.)
-                ChannelStore.shared.markSeen(hash: stream.hash)
+                ChannelStore.markSeenEverywhere(hash: stream.hash)
                 callback(stream, url)
             }
         }.resume()

@@ -1033,6 +1033,8 @@ struct ChannelDetailView: View {
     @ObservedObject var transfers = TransferMonitor.shared
     @ObservedObject var nowPlaying = NowPlaying.shared
     @ObservedObject var epg = EPGGuide.shared
+    /// The user's own channels, to mark the remote list's links that are already there.
+    @ObservedObject var localStore = ChannelStore.shared
     let actions: PlaybackActions
     let onPlay: (StreamLink) -> Void
     let onEditLink: (LinkEditTarget) -> Void
@@ -1052,9 +1054,19 @@ struct ChannelDetailView: View {
 
     /// Copies `link` (or the whole selection, when it's part of it) into a local channel,
     /// skipping streams the channel already has.
+    /// Hashes of every stream in the user's channels; empty outside the remote list.
+    private var localHashes: Set<String> {
+        guard readOnly else { return [] }
+        return Set(localStore.channels.flatMap(\.links).compactMap { $0.stream?.hash.lowercased() })
+    }
+
+    /// What "Copy to Local" copies: the selection if the link is part of it, else the link.
+    private func linksToCopy(_ link: StreamLink) -> [StreamLink] {
+        selection.contains(link.id) ? channel.links.filter { selection.contains($0.id) } : [link]
+    }
+
     private func copy(_ link: StreamLink, to channelID: UUID) {
-        let chosen = selection.contains(link.id)
-            ? channel.links.filter { selection.contains($0.id) } : [link]
+        let chosen = linksToCopy(link)
         let existing = Set(ChannelStore.shared.channel(id: channelID)?.links
             .compactMap { $0.stream?.hash.lowercased() } ?? [])
         let copies = chosen
@@ -1132,10 +1144,13 @@ struct ChannelDetailView: View {
             } else {
                 // Selection is drawn by hand (see `select`) because the native highlight
                 // can't be made softer.
+                let localHashes = self.localHashes
                 List {
                     ForEach(visibleLinks) { link in
                         LinkRow(
                             link: link,
+                            isLocal: link.stream.map { localHashes.contains($0.hash.lowercased()) }
+                                ?? false,
                             isLoading: status.activeLinkID == link.id && status.isBusy,
                             isPlaying: status.playingLinkIDs.contains(link.id),
                             availability: checker.results[link.id],
@@ -1216,7 +1231,13 @@ struct ChannelDetailView: View {
                                         Button(local.name) { copy(link, to: local.id) }
                                     }
                                 }
-                                .disabled(ChannelStore.shared.channels.isEmpty)
+                                // Nothing to copy when every link is already in a local group.
+                                .disabled(ChannelStore.shared.channels.isEmpty || linksToCopy(link)
+                                    .allSatisfy { copied in
+                                        copied.stream.map {
+                                            localHashes.contains($0.hash.lowercased())
+                                        } ?? true
+                                    })
                             }
                             if !readOnly {
                                 Divider()
@@ -1360,6 +1381,8 @@ final class HoverState: ObservableObject {
 
 struct LinkRow: View {
     let link: StreamLink
+    /// A remote list's link whose stream is also in the user's own channels.
+    var isLocal = false
     let isLoading: Bool
     let isPlaying: Bool
     let availability: Availability?
@@ -1428,7 +1451,8 @@ struct LinkRow: View {
                 HStack(spacing: 6) {
                     Text(link.shortHash)
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(link.stream == nil ? .red : .secondary)
+                        .foregroundColor(link.stream == nil ? .red : isLocal ? .green : .secondary)
+                        .help(isLocal ? "Also in your local groups" : "")
                     if let guide = guide {
                         Button { showsGuide.toggle() } label: {
                             Image(systemName: guideChosen ? "calendar.badge.checkmark" : "calendar")

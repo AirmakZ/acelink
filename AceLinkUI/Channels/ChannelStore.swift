@@ -75,6 +75,8 @@ struct StreamLink: Codable, Identifiable, Equatable {
     var lastResult: Availability?
     /// The peers the engine reported in that check, if it could read them.
     var lastPeers: Int?
+    /// When that check finished, so other apps can tell how old the result is.
+    var lastChecked: Date?
 
     var stream: StreamFile? {
         guard let stream = ExtractStream.from(unverifiedData: url), !stream.hash.isEmpty else {
@@ -210,6 +212,7 @@ final class ChannelStore: ObservableObject {
         updateLinks(hash: hash) { link in
             link.lastResult = result
             link.lastPeers = peers
+            link.lastChecked = date
             if result.rank <= Availability.slow(0).rank { link.lastSeen = date }
         }
     }

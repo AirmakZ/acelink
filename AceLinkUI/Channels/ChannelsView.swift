@@ -965,7 +965,9 @@ struct ChannelsView: View {
                     .foregroundColor(.secondary)
             }
             .opacity(compact ? 0 : 1)
-            Spacer(minLength: 4)
+            // Filling the width instead of a Spacer, which would add the stack's spacing
+            // twice and truncate long names far from the dot.
+            .frame(maxWidth: .infinity, alignment: .leading)
             if !compact { dot }
         }
         .help(compact ? channel.name : "")

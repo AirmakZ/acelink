@@ -238,18 +238,33 @@ struct EPGInfoView: View {
     }
 }
 
-/// A tooltip over the view it overlays. SwiftUI's `.help` shows nothing inside the guide's
-/// popover; an AppKit view's `toolTip` does.
-private struct AppKitToolTip: NSViewRepresentable {
+/// A tooltip over the view it overlays. SwiftUI's `.help` shows nothing inside popovers;
+/// an AppKit view's `toolTip` does. Being on top, it also gets the clicks: `onDoubleClick`
+/// replaces a SwiftUI double-click gesture, which would never fire under it.
+struct AppKitToolTip: NSViewRepresentable {
     let text: String
+    var onDoubleClick: (() -> Void)?
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        view.toolTip = text
+    final class ToolTipView: NSView {
+        var onDoubleClick: (() -> Void)?
+
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2, let onDoubleClick = onDoubleClick {
+                onDoubleClick()
+            } else {
+                super.mouseDown(with: event)
+            }
+        }
+    }
+
+    func makeNSView(context: Context) -> ToolTipView {
+        let view = ToolTipView()
+        updateNSView(view, context: context)
         return view
     }
 
-    func updateNSView(_ view: NSView, context: Context) {
+    func updateNSView(_ view: ToolTipView, context: Context) {
         view.toolTip = text
+        view.onDoubleClick = onDoubleClick
     }
 }

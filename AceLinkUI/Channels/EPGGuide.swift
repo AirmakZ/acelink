@@ -493,6 +493,46 @@ final class EPGGuide: ObservableObject {
         }.prefix(limit).map { $0 }
     }
 
+    /// A live programme of today on a guide channel that links use.
+    struct LiveEvent: Identifiable {
+        let ref: GuideRef
+        let programme: Programme
+        /// The links on that guide channel: the user's own first, then the remote list's.
+        let links: [StreamLink]
+
+        var id: String { "\(ref.source)|\(ref.id)|\(programme.start.timeIntervalSince1970)" }
+    }
+
+    /// Today's live programmes on the guide channels of the user's links and the remote
+    /// list's, by start time. Those of channels without links are left out. Call on the
+    /// main thread.
+    func liveEventsToday() -> [LiveEvent] {
+        let dayStart = Calendar.current.startOfDay(for: Date())
+        let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+        return liveEvents(from: dayStart, to: dayEnd)
+    }
+
+    /// Like `liveEventsToday`, between any two times. Call on the main thread.
+    func liveEvents(from start: Date, to end: Date) -> [LiveEvent] {
+        guard hasGuide else { return [] }
+        var links: [GuideRef: [StreamLink]] = [:]
+        var seen: Set<String> = [] // "ref|hash": a stream in both lists is listed once.
+        for channel in ChannelStore.shared.channels + RemoteList.shared.store.channels {
+            for link in channel.links {
+                guard let ref = guideChannel(for: link), let hash = link.stream?.hash.lowercased(),
+                      seen.insert("\(ref.source)|\(ref.id)|\(hash)").inserted else { continue }
+                links[ref, default: []].append(link)
+            }
+        }
+        return links.flatMap { ref, links in
+            (guides[ref.source]?.livePrograms(ref.id, from: start, to: end) ?? [])
+                .map { LiveEvent(ref: ref, programme: $0, links: links) }
+        }
+        .sorted {
+            ($0.programme.start, $0.ref.id) < ($1.programme.start, $1.ref.id)
+        }
+    }
+
     func schedule(_ ref: GuideRef, count: Int) -> [Programme] {
         guides[ref.source]?.schedule(ref.id, count: count) ?? []
     }
@@ -570,8 +610,37 @@ final class EPGGuide: ObservableObject {
         let category: String?
         let start: Date
         let stop: Date
+        /// Broadcast live: XMLTV's `<live/>`, or a title starting with "DIRECTO" (dobleM's
+        /// mark; "Directo al grano" is a show, not a live event).
+        let isLive: Bool
+        /// A preview, talk show or press conference rather than the event itself: the
+        /// guide's "Sports magazines" category.
+        let isMagazine: Bool
 
         var id: Date { start }
+
+        /// What dobleM puts after the last " · " of a live event's title: "Liga F",
+        /// "LALIGA HYPERMOTION". Without the year or the week's race or venue ("Mundial F1 -
+        /// GP de Las Vegas", "Premier Padel. Dubai"), so each competition is one entry.
+        var competition: String? {
+            guard let mark = title.range(of: " · ", options: .backwards) else { return nil }
+            var name = String(title[mark.upperBound...])
+            if let year = name.range(of: #"\s(19|20)\d{2}$"#, options: .regularExpression) {
+                name.removeSubrange(year)
+            }
+            for separator in [" - ", ". "] {
+                if let range = name.range(of: separator) { name = String(name[..<range.lowerBound]) }
+            }
+            name = name.trimmingCharacters(in: .whitespaces)
+            return name.isEmpty ? nil : name
+        }
+
+        /// The title without dobleM's "DIRECTO" mark.
+        var plainTitle: String {
+            guard title.hasPrefix("DIRECTO") else { return title }
+            let rest = title.dropFirst("DIRECTO".count).trimmingCharacters(in: .whitespaces)
+            return rest.isEmpty ? title : rest
+        }
 
         var isOn: Bool {
             let now = Date()
@@ -757,24 +826,47 @@ final class EPGGuide: ObservableObject {
             return (programmes[id] ?? []).filter { $0.stop > now }
                 .sorted { $0.start < $1.start }
                 .prefix(count)
-                .map { programme in
-                    let text = String(decoding: data[programme.range], as: UTF8.self)
-                    // Some guides start texts with "· " or end the sub-title with " |".
-                    let junk = CharacterSet.whitespacesAndNewlines.union(.init(charactersIn: "·|"))
-                    let first = { (name: String) in
-                        Self.texts(of: name, in: text).first
-                            .map { $0.trimmingCharacters(in: junk) }
-                            .flatMap { $0.isEmpty ? nil : $0 }
-                    }
-                    return Programme(
-                        title: first("title") ?? "Untitled",
-                        subtitle: first("sub-title"),
-                        details: first("desc"),
-                        category: first("category"),
-                        start: programme.start,
-                        stop: programme.stop
-                    )
+                .map(programme)
+        }
+
+        /// The channel's live programmes that are on at some point between these times.
+        func livePrograms(_ id: String, from start: Date, to end: Date) -> [Programme] {
+            (programmes[id] ?? []).filter { entry in
+                // Only those that can be live are read in full: most aren't.
+                entry.stop > start && entry.start < end && Self.liveMarks.contains {
+                    data[entry.range].range(of: $0) != nil
                 }
+            }
+            .map(programme)
+            .filter(\.isLive)
+        }
+
+        private static let liveMarks = ["DIRECTO", "<live"].map { Data($0.utf8) }
+
+        private func programme(
+            _ entry: (range: Range<Int>, start: Date, stop: Date)
+        ) -> Programme {
+            let text = String(decoding: data[entry.range], as: UTF8.self)
+            // Some guides start texts with "· " or end the sub-title with " |".
+            let junk = CharacterSet.whitespacesAndNewlines.union(.init(charactersIn: "·|"))
+            let first = { (name: String) in
+                Self.texts(of: name, in: text).first
+                    .map { $0.trimmingCharacters(in: junk) }
+                    .flatMap { $0.isEmpty ? nil : $0 }
+            }
+            let title = first("title") ?? "Untitled"
+            let marked = title.hasPrefix("DIRECTO")
+                && (title.count == 7 || title.dropFirst(7).first?.isWhitespace == true)
+            return Programme(
+                title: title,
+                subtitle: first("sub-title"),
+                details: first("desc"),
+                category: first("category"),
+                start: entry.start,
+                stop: entry.stop,
+                isLive: marked || text.contains("<live/>") || text.contains("<live />"),
+                isMagazine: Self.texts(of: "category", in: text).contains("Sports magazines")
+            )
         }
 
         /// The guide to keep on disk: every channel, the whole schedule of these, and of

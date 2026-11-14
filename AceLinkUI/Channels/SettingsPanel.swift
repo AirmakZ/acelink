@@ -9,6 +9,7 @@ struct SettingsPanel: View {
     let onImport: () -> Void
 
     @ObservedObject var epg = EPGGuide.shared
+    @ObservedObject var liveFilter = LiveFilter.shared
     @State private var urlText = ""
     @State private var guideURLText = ""
     @FocusState private var urlFieldFocused: Bool
@@ -23,6 +24,10 @@ struct SettingsPanel: View {
             remoteSection
             Divider()
             guideSection
+            if epg.isEnabled {
+                Divider()
+                liveSection
+            }
             Divider()
             channelsSection
         }
@@ -229,6 +234,71 @@ struct SettingsPanel: View {
         guard canAddGuide else { return }
         epg.addSource(trimmedGuideURL)
         guideURLText = ""
+    }
+
+    /// What Live Today lists: previews and talk shows, and each competition the guide has
+    /// had on your channels.
+    private var liveSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Live Today").font(.headline)
+            Text("The live events listed by the toolbar's calendar button. Competitions are " +
+                "added as the guide brings them, shown until you turn them off.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("Hide previews and talk shows", isOn: Binding(
+                get: { liveFilter.hidesMagazines },
+                set: { liveFilter.setHidesMagazines($0) }
+            ))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(liveFilter.names, id: \.self) { name in
+                        Toggle(isOn: Binding(
+                            get: { !liveFilter.hidden.contains(name) },
+                            set: { liveFilter.setShown(name, $0) }
+                        )) {
+                            HStack {
+                                Text(name).lineLimit(1)
+                                Spacer()
+                                Text(countText(liveFilter.counts[name] ?? 0))
+                                    .foregroundColor(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 170)
+            .background(RoundedRectangle(cornerRadius: 6)
+                .fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .stroke(Color(nsColor: .separatorColor)))
+            .overlay {
+                if liveFilter.names.isEmpty {
+                    Text("No live events in your channels' guides yet.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            HStack {
+                Button("Show All") { liveFilter.setAllShown(true) }
+                Button("Hide All") { liveFilter.setAllShown(false) }
+                Spacer()
+                Text("\(liveFilter.names.count - liveFilter.hidden.count) of " +
+                    "\(liveFilter.names.count) shown")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .controlSize(.small)
+        }
+        .onAppear { liveFilter.learn(from: epg) }
+    }
+
+    /// Live events from today on: "3 events".
+    private func countText(_ count: Int) -> String {
+        count == 0 ? "none soon" : "\(count) event\(count == 1 ? "" : "s")"
     }
 
     private var channelsSection: some View {

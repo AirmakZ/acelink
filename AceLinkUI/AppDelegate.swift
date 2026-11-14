@@ -190,6 +190,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if channelsWindow == nil {
             channelsWindow = ChannelsWindowController(actions: PlaybackActions(
                 play: { [weak self] link in self?.play(link: link) },
+                playBest: { [weak self] in self?.playBest(of: $0) },
                 playAlongside: { [weak self] link in self?.play(link: link, alongside: true) },
                 stopLink: { [weak self] in self?.stopPlaying(linkID: $0) },
                 stopStream: { [weak self] in self?.stopPlaying(hash: $0) },
@@ -401,7 +402,63 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             channel.links = channel.links.filter { $0.id == linkID }
         }
         guard !channel.links.isEmpty else { return }
+        check(channel, singleLink: linkID != nil)
+    }
 
+    /// Links to one TV channel checked before playing the best (see `playBest`): only those
+    /// that worked most recently, so it doesn't take long.
+    static let bestOfLimit = 6
+
+    /// Plays the best of several links to the same TV channel (a live event's): the fastest
+    /// working one by its last check. Without one, checks those that worked before and plays
+    /// the fastest of them. Without any that ever worked, the first.
+    func playBest(of links: [StreamLink]) {
+        let links = links.filter { $0.stream != nil }
+        guard let first = links.first else { return }
+        func kbps(_ link: StreamLink) -> Int? {
+            let current = checker.results[link.id].flatMap { $0.isPending ? nil : $0 }
+            if case let .available(kbps)? = current ?? link.lastResult { return kbps }
+            return nil
+        }
+        if let best = links.compactMap({ link in kbps(link).map { (link, $0) } })
+            .max(by: { $0.1 < $1.1 }) {
+            return play(link: best.0)
+        }
+        let seen = links.compactMap { link in link.lastSeen.map { (link, $0) } }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
+        guard let recent = seen.first else { return play(link: first) }
+        // Nothing to compare, or a check is already running: the one that worked last.
+        guard seen.count > 1, EngineRuntime.isAvailable, !checker.isRunning, !status.isBusy
+        else { return play(link: recent) }
+
+        let candidates = Array(seen.prefix(Self.bestOfLimit))
+        os_log("No working link known: checking %d before playing.", candidates.count)
+        check(Channel(name: "Live event", links: candidates), singleLink: false) { outcome in
+            let working = candidates.compactMap { link -> (link: StreamLink, rank: Int, kbps: Int)? in
+                switch outcome[link.id] {
+                case let .available(kbps)?: return (link, 0, kbps)
+                case let .slow(kbps)?: return (link, 1, kbps)
+                default: return nil
+                }
+            }
+            guard let best = working.min(by: { ($0.rank, -$0.kbps) < ($1.rank, -$1.kbps) }) else {
+                self.finishCheck()
+                self.status.set(.failed(
+                    "None of the \(candidates.count) channels that worked before works now."
+                ))
+                return
+            }
+            self.play(link: best.link)
+        }
+    }
+
+    /// Checks a channel's links, leaving out those that play. `then` gets the results
+    /// instead of the usual wrap-up (sorting the links, stopping the engine).
+    private func check(
+        _ channel: Channel, singleLink: Bool,
+        then: (([UUID: Availability]) -> Void)? = nil
+    ) {
         if !EngineRuntime.isAvailable {
             fail("Docker is not installed. Install Docker Desktop from the menu bar icon.",
                  generation: generation)
@@ -414,7 +471,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let tvHashes = sharing ? self.tv.activeStreamHashes() : []
             DispatchQueue.main.async {
                 self.startCheck(
-                    channel: channel, singleLink: linkID != nil, playing: macHashes.union(tvHashes)
+                    channel: channel, singleLink: singleLink,
+                    playing: macHashes.union(tvHashes), then: then
                 )
             }
         }
@@ -422,7 +480,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Streams playing on the Mac or the TV are left out: testing one opens another
     /// session for it, and the engine sends a stream to one session only.
-    private func startCheck(channel: Channel, singleLink: Bool, playing: Set<String>) {
+    private func startCheck(
+        channel: Channel, singleLink: Bool, playing: Set<String>,
+        then: (([UUID: Availability]) -> Void)?
+    ) {
         guard !checker.isRunning, !status.isBusy else { return }
         var channel = channel
         let channelID = channel.id
@@ -467,6 +528,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.checker.run(channel: channel, maxConcurrent: maxConcurrent) { outcome in
                 let available = outcome.values.filter { $0.rank == 0 }.count
                 os_log("Check done: %d of %d available.", available, outcome.count)
+                if let then = then { return then(outcome) }
                 // A single link keeps its place; sorting only makes sense for the whole channel.
                 if !singleLink {
                     withAnimation {

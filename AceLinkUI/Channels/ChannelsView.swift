@@ -147,6 +147,8 @@ private struct LinkDropDelegate: DropDelegate {
 
 struct PlaybackActions {
     var play: (StreamLink) -> Void
+    /// Plays the best of several links to one TV channel, checking them first if needed.
+    var playBest: ([StreamLink]) -> Void
     var playAlongside: (StreamLink) -> Void
     /// Stops one link playing on the Mac, leaving the others playing.
     var stopLink: (UUID) -> Void
@@ -173,6 +175,9 @@ final class ChannelsUIState: ObservableObject {
     @Published var channelPendingDelete: Channel?
     @Published var showTVPanel = false
     @Published var showSettings = false
+    @Published var showLiveEvents = false
+    /// A link that started playing, for the link list to select and scroll to.
+    @Published var revealLinkID: UUID?
     /// Settings were opened by picking Remote without an address: switch once one is saved.
     @Published var switchToRemoteOnURL = false
     /// The channel a link drag is hovering over in the sidebar.
@@ -393,6 +398,7 @@ struct ChannelsView: View {
     @ObservedObject var tv = TVShare.shared
     @ObservedObject var remote = RemoteList.shared
     @ObservedObject var remoteStore = RemoteList.shared.store
+    @ObservedObject var epg = EPGGuide.shared
     let actions: PlaybackActions
 
     @StateObject private var ui = ChannelsUIState()
@@ -408,6 +414,23 @@ struct ChannelsView: View {
 
     private func rememberSelection(_ id: UUID) {
         if showRemote { lastRemoteGroup = id.uuidString } else { lastLocalGroup = id.uuidString }
+    }
+
+    /// Shows a link that started playing (e.g. from Live Today): its list, its group and the
+    /// link itself, selected.
+    private func reveal(linkID: UUID) {
+        let lists = [(store, false), (remoteStore, true)]
+        guard let (channel, remote) = lists.lazy.compactMap({ list, remote in
+            list.channels.first { $0.links.contains { $0.id == linkID } }.map { ($0, remote) }
+        }).first else { return }
+        // A search that hides the link would leave nothing to show.
+        if let link = channel.links.first(where: { $0.id == linkID }), !search.isEmpty,
+           !linkMatches(link, search: search) {
+            ui.search = ""
+        }
+        ui.selection = channel.id
+        showRemote = remote
+        ui.revealLinkID = linkID
     }
 
     /// The current list's last selected group if it's still shown, else its first one.
@@ -531,6 +554,9 @@ struct ChannelsView: View {
         .onAppear {
             if ui.selection == nil { ui.selection = initialSelection }
         }
+        .onChange(of: status.activeLinkID) { id in
+            if let id = id { reveal(linkID: id) }
+        }
         .onChange(of: ui.selection) { id in
             // Only a group of the list on screen: Now Playing selects one of the other list
             // just before switching to it.
@@ -592,7 +618,8 @@ struct ChannelsView: View {
                     actions: actions,
                     onPlay: actions.play,
                     onEditLink: { ui.editingLink = $0 },
-                    onBulkAdd: { ui.bulkAdd = BulkAddTarget(id: channel.id) }
+                    onBulkAdd: { ui.bulkAdd = BulkAddTarget(id: channel.id) },
+                    revealLinkID: $ui.revealLinkID
                 )
             } else {
                 emptyDetail
@@ -629,6 +656,26 @@ struct ChannelsView: View {
                 if !showRemote { addMenu(for: selectedChannel) }
             }
             if #available(macOS 26, *) { ToolbarSpacer(.fixed, placement: .primaryAction) }
+            // Only with the TV guide on: that's where the live events come from.
+            if epg.isEnabled {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        ui.showLiveEvents.toggle()
+                    } label: {
+                        Label("Live Today", systemImage: "calendar")
+                    }
+                    .help("Today's live events on your channels, from the TV guide")
+                    .popover(isPresented: $ui.showLiveEvents, arrowEdge: .bottom) {
+                        LiveEventsView(checker: checker) { link in
+                            ui.showLiveEvents = false
+                            actions.play(link)
+                        } onPlayBest: { links in
+                            ui.showLiveEvents = false
+                            actions.playBest(links)
+                        }
+                    }
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     ui.showTVPanel.toggle()
@@ -1061,6 +1108,8 @@ struct ChannelDetailView: View {
     let onPlay: (StreamLink) -> Void
     let onEditLink: (LinkEditTarget) -> Void
     let onBulkAdd: () -> Void
+    /// Set when a link starts playing: selected and scrolled to if it's in this channel.
+    @Binding var revealLinkID: UUID?
 
     @State private var selection = Set<UUID>()
     /// The link whose TV guide is being picked ("Match EPG…").
@@ -1074,8 +1123,6 @@ struct ChannelDetailView: View {
         return channel.links.filter { selection.contains($0.id) }.map(\.name)
     }
 
-    /// Copies `link` (or the whole selection, when it's part of it) into a local channel,
-    /// skipping streams the channel already has.
     /// Hashes of every stream in the user's channels; empty outside the remote list.
     private var localHashes: Set<String> {
         guard readOnly else { return [] }
@@ -1087,6 +1134,8 @@ struct ChannelDetailView: View {
         selection.contains(link.id) ? channel.links.filter { selection.contains($0.id) } : [link]
     }
 
+    /// Copies `link` (or the whole selection, when it's part of it) into a local channel,
+    /// skipping streams the channel already has.
     private func copy(_ link: StreamLink, to channelID: UUID) {
         let chosen = linksToCopy(link)
         let existing = Set(ChannelStore.shared.channel(id: channelID)?.links
@@ -1095,6 +1144,18 @@ struct ChannelDetailView: View {
             .filter { $0.stream.map { !existing.contains($0.hash.lowercased()) } ?? false }
             .map { StreamLink(name: $0.name, url: $0.url) }
         if !copies.isEmpty { ChannelStore.shared.add(links: copies, to: channelID) }
+    }
+
+    /// Selects and scrolls to the link that started playing, if it's in this channel.
+    private func reveal(with proxy: ScrollViewProxy) {
+        guard let id = revealLinkID, visibleLinks.contains(where: { $0.id == id }) else { return }
+        revealLinkID = nil
+        selection = [id]
+        anchor = id
+        // After the list has its rows, or there's nothing to scroll to.
+        DispatchQueue.main.async {
+            withAnimation { proxy.scrollTo(id, anchor: .center) }
+        }
     }
 
     /// Click selects, ⌘-click adds or removes, ⇧-click selects the range from the anchor.
@@ -1167,137 +1228,141 @@ struct ChannelDetailView: View {
                 // Selection is drawn by hand (see `select`) because the native highlight
                 // can't be made softer.
                 let localHashes = self.localHashes
-                List {
-                    ForEach(visibleLinks) { link in
-                        LinkRow(
-                            link: link,
-                            isLocal: link.stream.map { localHashes.contains($0.hash.lowercased()) }
-                                ?? false,
-                            isLoading: status.activeLinkID == link.id && status.isBusy,
-                            isPlaying: status.playingLinkIDs.contains(link.id),
-                            availability: checker.results[link.id],
-                            peers: checker.peers[link.id],
-                            rate: link.stream.flatMap { transfers.rates[$0.hash.lowercased()] },
-                            lastRate: link.stream.flatMap { transfers.lastRates[$0.hash.lowercased()] },
-                            viewers: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.viewers ?? [],
-                            connecting: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.connecting,
-                            guide: epg.guideChannel(for: link),
-                            guideChosen: epg.choice(for: link) != .automatic,
-                            onMatchGuide: { matchingLink = link },
-                            onStop: { actions.stopLink(link.id) },
-                            onPlay: {
-                                if NSEvent.modifierFlags.contains(.option) {
-                                    actions.playAlongside(link)
-                                } else {
-                                    onPlay(link)
-                                }
-                            }
-                        )
-                        // A soft green behind every link being watched, on this Mac or on
-                        // another device, so playing links stand out at a glance.
-                        // Selected links get a soft blue on top of that.
-                        .listRowBackground(
-                            ZStack {
-                                if link.stream.flatMap({ nowPlaying.stream(hash: $0.hash) }) != nil {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.green.opacity(0.14))
-                                        .padding(.horizontal, 4)
-                                }
-                                if selection.contains(link.id) {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.accentColor.opacity(0.22))
-                                        .padding(.horizontal, 4)
-                                }
-                            }
-                        )
-                        // Simultaneous with the row's double click, so it reacts at once.
-                        .simultaneousGesture(TapGesture().onEnded { select(link) })
-                        // Dragging a selected link takes the whole selection with it.
-                        .onDrag {
-                            let ids = selection.contains(link.id) ? selection : [link.id]
-                            return LinkDragPayload(channelID: channel.id, linkIDs: ids).provider
-                        } preview: {
-                            LinkDragPreview(
-                                names: dragNames(for: link),
-                                count: selection.contains(link.id) ? max(selection.count, 1) : 1
-                            )
-                        }
-                        .contextMenu {
-                            if status.playingLinkIDs.contains(link.id) {
-                                Button("Stop") { actions.stopLink(link.id) }
-                            }
-                            Button("Play") { onPlay(link) }
-                            Button("Play Alongside") { actions.playAlongside(link) }
-                                .disabled(status.playingLinkIDs.isEmpty || status.isBusy)
-                            Button("Check Availability") { actions.checkLink(channel.id, link.id) }
-                                .disabled(link.stream == nil || checker.isRunning || status.isBusy)
-                            Divider()
-                            if !readOnly {
-                                Button("Edit Channel…") {
-                                    onEditLink(
-                                        LinkEditTarget(channelID: channel.id, link: link, isNew: false)
-                                    )
-                                }
-                            }
-                            Button("Copy Link") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(link.url, forType: .string)
-                            }
-                            if epg.isEnabled {
-                                Button("Match EPG…") { matchingLink = link }
-                                    .disabled(!epg.hasGuide || link.stream == nil)
-                            }
-                            if readOnly {
-                                Menu("Copy to Local") {
-                                    ForEach(ChannelStore.shared.channels) { local in
-                                        Button(local.name) { copy(link, to: local.id) }
+                ScrollViewReader { proxy in
+                    List {
+                        ForEach(visibleLinks) { link in
+                            LinkRow(
+                                link: link,
+                                isLocal: link.stream.map { localHashes.contains($0.hash.lowercased()) }
+                                    ?? false,
+                                isLoading: status.activeLinkID == link.id && status.isBusy,
+                                isPlaying: status.playingLinkIDs.contains(link.id),
+                                availability: checker.results[link.id],
+                                peers: checker.peers[link.id],
+                                rate: link.stream.flatMap { transfers.rates[$0.hash.lowercased()] },
+                                lastRate: link.stream.flatMap { transfers.lastRates[$0.hash.lowercased()] },
+                                viewers: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.viewers ?? [],
+                                connecting: link.stream.flatMap { nowPlaying.stream(hash: $0.hash) }?.connecting,
+                                guide: epg.guideChannel(for: link),
+                                guideChosen: epg.choice(for: link) != .automatic,
+                                onMatchGuide: { matchingLink = link },
+                                onStop: { actions.stopLink(link.id) },
+                                onPlay: {
+                                    if NSEvent.modifierFlags.contains(.option) {
+                                        actions.playAlongside(link)
+                                    } else {
+                                        onPlay(link)
                                     }
                                 }
-                                // Nothing to copy when every link is already in a local group.
-                                .disabled(ChannelStore.shared.channels.isEmpty || linksToCopy(link)
-                                    .allSatisfy { copied in
-                                        copied.stream.map {
-                                            localHashes.contains($0.hash.lowercased())
-                                        } ?? true
-                                    })
+                            )
+                            // A soft green behind every link being watched, on this Mac or on
+                            // another device, so playing links stand out at a glance.
+                            // Selected links get a soft blue on top of that.
+                            .listRowBackground(
+                                ZStack {
+                                    if link.stream.flatMap({ nowPlaying.stream(hash: $0.hash) }) != nil {
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.green.opacity(0.14))
+                                            .padding(.horizontal, 4)
+                                    }
+                                    if selection.contains(link.id) {
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.accentColor.opacity(0.22))
+                                            .padding(.horizontal, 4)
+                                    }
+                                }
+                            )
+                            // Simultaneous with the row's double click, so it reacts at once.
+                            .simultaneousGesture(TapGesture().onEnded { select(link) })
+                            // Dragging a selected link takes the whole selection with it.
+                            .onDrag {
+                                let ids = selection.contains(link.id) ? selection : [link.id]
+                                return LinkDragPayload(channelID: channel.id, linkIDs: ids).provider
+                            } preview: {
+                                LinkDragPreview(
+                                    names: dragNames(for: link),
+                                    count: selection.contains(link.id) ? max(selection.count, 1) : 1
+                                )
                             }
-                            if !readOnly {
+                            .contextMenu {
+                                if status.playingLinkIDs.contains(link.id) {
+                                    Button("Stop") { actions.stopLink(link.id) }
+                                }
+                                Button("Play") { onPlay(link) }
+                                Button("Play Alongside") { actions.playAlongside(link) }
+                                    .disabled(status.playingLinkIDs.isEmpty || status.isBusy)
+                                Button("Check Availability") { actions.checkLink(channel.id, link.id) }
+                                    .disabled(link.stream == nil || checker.isRunning || status.isBusy)
                                 Divider()
-                                Button("Delete Channel") {
-                                    store.delete(linkID: link.id, in: channel.id)
+                                if !readOnly {
+                                    Button("Edit Channel…") {
+                                        onEditLink(
+                                            LinkEditTarget(channelID: channel.id, link: link, isNew: false)
+                                        )
+                                    }
+                                }
+                                Button("Copy Link") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(link.url, forType: .string)
+                                }
+                                if epg.isEnabled {
+                                    Button("Match EPG…") { matchingLink = link }
+                                        .disabled(!epg.hasGuide || link.stream == nil)
+                                }
+                                if readOnly {
+                                    Menu("Copy to Local") {
+                                        ForEach(ChannelStore.shared.channels) { local in
+                                            Button(local.name) { copy(link, to: local.id) }
+                                        }
+                                    }
+                                    // Nothing to copy when every link is already in a local group.
+                                    .disabled(ChannelStore.shared.channels.isEmpty || linksToCopy(link)
+                                        .allSatisfy { copied in
+                                            copied.stream.map {
+                                                localHashes.contains($0.hash.lowercased())
+                                            } ?? true
+                                        })
+                                }
+                                if !readOnly {
+                                    Divider()
+                                    Button("Delete Channel") {
+                                        store.delete(linkID: link.id, in: channel.id)
+                                    }
                                 }
                             }
                         }
-                    }
-                    // Reordering goes through the same drag payload as moving to another
-                    // channel, so it works for several selected links at once.
-                    .onInsert(of: [.plainText]) { index, providers in
-                        // While searching, the index is in the shown links: insert before
-                        // the same link in the whole list.
-                        let index = index < visibleLinks.count
-                            ? channel.links.firstIndex { $0.id == visibleLinks[index].id } ?? index
-                            : (visibleLinks.last.flatMap { last in
-                                channel.links.firstIndex { $0.id == last.id }.map { $0 + 1 }
-                            } ?? channel.links.count)
-                        _ = LinkDragPayload.load(from: providers) { payload in
-                            // The remote list only allows ordering within a channel.
-                            if readOnly, payload.channelID != channel.id { return }
-                            store.move(
-                                linkIDs: payload.linkIDs, from: payload.channelID,
-                                to: channel.id, at: index
-                            )
+                        // Reordering goes through the same drag payload as moving to another
+                        // channel, so it works for several selected links at once.
+                        .onInsert(of: [.plainText]) { index, providers in
+                            // While searching, the index is in the shown links: insert before
+                            // the same link in the whole list.
+                            let index = index < visibleLinks.count
+                                ? channel.links.firstIndex { $0.id == visibleLinks[index].id } ?? index
+                                : (visibleLinks.last.flatMap { last in
+                                    channel.links.firstIndex { $0.id == last.id }.map { $0 + 1 }
+                                } ?? channel.links.count)
+                            _ = LinkDragPayload.load(from: providers) { payload in
+                                // The remote list only allows ordering within a channel.
+                                if readOnly, payload.channelID != channel.id { return }
+                                store.move(
+                                    linkIDs: payload.linkIDs, from: payload.channelID,
+                                    to: channel.id, at: index
+                                )
+                            }
                         }
+                        .onDelete(perform: readOnly ? nil : { offsets in
+                            for index in offsets {
+                                store.delete(linkID: visibleLinks[index].id, in: channel.id)
+                            }
+                        })
                     }
-                    .onDelete(perform: readOnly ? nil : { offsets in
-                        for index in offsets {
-                            store.delete(linkID: visibleLinks[index].id, in: channel.id)
-                        }
-                    })
-                }
-                .listStyle(.inset)
-                .background(OutsideClickMonitor { selection = [] })
-                .sheet(item: $matchingLink) { link in
-                    EPGMatchSheet(link: link) { matchingLink = nil }
+                    .listStyle(.inset)
+                    .background(OutsideClickMonitor { selection = [] })
+                    .sheet(item: $matchingLink) { link in
+                        EPGMatchSheet(link: link) { matchingLink = nil }
+                    }
+                    .onAppear { reveal(with: proxy) }
+                    .onChange(of: revealLinkID) { _ in reveal(with: proxy) }
                 }
             }
         }
@@ -1379,7 +1444,7 @@ struct AvailabilityDot: View {
         .frame(width: 12, height: 12)
     }
 
-    private static func style(_ availability: Availability) -> (color: Color, help: String)? {
+    static func style(_ availability: Availability) -> (color: Color, help: String)? {
         switch availability {
         case .checking, .queued:
             return nil

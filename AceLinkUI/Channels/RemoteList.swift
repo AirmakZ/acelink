@@ -48,6 +48,7 @@ final class RemoteList: ObservableObject {
         var lastSeen: Date?
         var lastResult: Availability?
         var lastPeers: Int?
+        var lastChecked: Date?
     }
 
     private static var historyURL: URL {
@@ -151,6 +152,7 @@ final class RemoteList: ObservableObject {
                 channel.links[index].lastSeen = saved.lastSeen
                 channel.links[index].lastResult = saved.lastResult
                 channel.links[index].lastPeers = saved.lastPeers
+                channel.links[index].lastChecked = saved.lastChecked
             }
             return channel
         }
@@ -163,7 +165,8 @@ final class RemoteList: ObservableObject {
             guard let hash = link.stream?.hash.lowercased(),
                   link.lastSeen != nil || link.lastResult != nil else { continue }
             history[hash] = LinkHistory(
-                lastSeen: link.lastSeen, lastResult: link.lastResult, lastPeers: link.lastPeers
+                lastSeen: link.lastSeen, lastResult: link.lastResult, lastPeers: link.lastPeers,
+                lastChecked: link.lastChecked
             )
         }
         do {

@@ -11,6 +11,8 @@ final class TVShare: ObservableObject {
 
     static let port: UInt16 = 8765
     static let playlistPath = "/acelink.m3u"
+    /// Every link's availability as JSON, for other apps (see `status`).
+    static let statusPath = "/status.json"
     private static let enabledKey = "tvSharingEnabled"
     private static let hideDeadLinksKey = "tvHideDeadLinks"
 
@@ -165,6 +167,16 @@ final class TVShare: ObservableObject {
                 let hidden = self.hideDeadLinks ? Self.deadLinkIDs() : []
                 let body = Self.playlist(host: host, hiding: hidden)
                 send(Self.http(200, type: "audio/x-mpegurl; charset=utf-8", body: Data(body.utf8)))
+            }
+            return
+        }
+
+        if path == Self.statusPath {
+            // On the main thread, like the playlist: it reads the checker and what plays.
+            DispatchQueue.main.async {
+                let hidden = self.hideDeadLinks ? Self.deadLinkIDs() : []
+                let body = Self.status(host: host, hiding: hidden)
+                send(Self.http(200, type: "application/json; charset=utf-8", body: body))
             }
             return
         }
@@ -854,11 +866,133 @@ final class TVShare: ObservableObject {
                 let url = "http://\(host):\(port)/play/\(stream.param)/\(stream.hash).m3u8"
                 let tvgID = EPGGuide.shared.tvgID(for: link)
                     .map { " tvg-id=\"\(clean($0))\"" } ?? ""
-                out += "#EXTINF:-1\(tvgID)\(logo) group-title=\"\(group)\"," +
+                // Apps that don't know these attributes ignore them.
+                let state = LinkState(link)
+                let status = " ace-status=\"\(state.color)\""
+                    + (state.peers.map { " ace-peers=\"\($0)\"" } ?? "")
+                    + (state.kBps.map { " ace-kBps=\"\($0)\"" } ?? "")
+                out += "#EXTINF:-1\(tvgID)\(logo) group-title=\"\(group)\"\(status)," +
                     "\(group) · \(name)\n\(url)\n"
             }
         }
         return out
+    }
+
+    // MARK: - Status for other apps
+
+    /// A link's availability as other apps get it: this session's check result, else the
+    /// one saved by an earlier check. Call on the main thread.
+    private struct LinkState {
+        /// "available", "slow", "noVideo" or "unavailable"; nil if it was never checked.
+        let result: String?
+        /// "green", "orange", "red", or "unknown" if it was never checked.
+        let color: String
+        let kBps: Int?
+        let peers: Int?
+        /// Being tested, or waiting for its turn, right now. `result` is the previous one.
+        let checking: Bool
+
+        init(_ link: StreamLink) {
+            let checker = LinkChecker.shared
+            let current = checker.results[link.id]
+            checking = current?.isPending == true
+            let settled = current.flatMap { $0.isPending ? nil : $0 }
+            // The peers of this session's check go with its result, not with a saved one.
+            peers = settled != nil ? checker.peers[link.id] ?? link.lastPeers : link.lastPeers
+            switch settled ?? link.lastResult {
+            case let .available(rate): (result, color, kBps) = ("available", "green", rate)
+            case let .slow(rate): (result, color, kBps) = ("slow", "orange", rate)
+            case .noVideo: (result, color, kBps) = ("noVideo", "red", nil)
+            case .unavailable: (result, color, kBps) = ("unavailable", "red", nil)
+            case .checking, .queued, nil: (result, color, kBps) = (nil, "unknown", nil)
+            }
+        }
+    }
+
+    /// What `/status.json` answers. Keys without a value are left out.
+    private struct Status: Encodable {
+        let app = "AceLinkUI"
+        let version = AppConstants.version
+        let generatedAt = Date()
+        /// An availability check is running, so results are about to change.
+        let checkRunning: Bool
+        let channels: [Entry]
+
+        struct Entry: Encodable {
+            let name: String
+            /// As in the playlist's `group-title` (the remote list's start with "R - ").
+            let group: String
+            /// "local" (your channels) or "remote" (the remote list).
+            let source: String
+            let hash: String
+            /// The same address the playlist has for it.
+            let url: String
+            let status: String
+            let result: String?
+            /// The speed measured by the check, in KB/s (kilobytes, like `live`).
+            let kBps: Int?
+            let peers: Int?
+            let checkedAt: Date?
+            let lastSeenAt: Date?
+            let checking: Bool
+            /// False when the playlist leaves it out (red in its last check).
+            let inPlaylist: Bool
+            let playing: Bool
+            let viewers: Int
+            /// Measured now, only while it plays.
+            let live: Live?
+        }
+
+        struct Live: Encodable {
+            let downKBps: Int
+            let upKBps: Int
+            let peers: Int
+        }
+    }
+
+    /// Every link of both lists with its availability, as JSON. Call on the main thread.
+    static func status(host: String, hiding hidden: Set<UUID> = []) -> Data {
+        var entries: [Status.Entry] = []
+        let lists = [
+            (ChannelStore.shared.channels, "local", ""),
+            (RemoteList.shared.store.channels, "remote", remotePrefix),
+        ]
+        for (channels, source, prefix) in lists {
+            for channel in channels {
+                for link in channel.links {
+                    guard let stream = link.stream else { continue }
+                    let hash = stream.hash.lowercased()
+                    let state = LinkState(link)
+                    let playing = NowPlaying.shared.stream(hash: hash)
+                    let rate = TransferMonitor.shared.rates[hash]
+                    entries.append(Status.Entry(
+                        name: clean(link.name.isEmpty ? "Channel" : link.name),
+                        group: prefix + clean(channel.name),
+                        source: source,
+                        hash: stream.hash,
+                        url: "http://\(host):\(port)/play/\(stream.param)/\(stream.hash).m3u8",
+                        status: state.color,
+                        result: state.result,
+                        kBps: state.kBps,
+                        peers: state.peers,
+                        checkedAt: link.lastChecked,
+                        lastSeenAt: link.lastSeen,
+                        checking: state.checking,
+                        inPlaylist: !hidden.contains(link.id),
+                        playing: playing != nil,
+                        viewers: playing?.viewers.count ?? 0,
+                        live: rate.map {
+                            Status.Live(downKBps: $0.downKBps, upKBps: $0.upKBps, peers: $0.peers)
+                        }
+                    ))
+                }
+            }
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        let status = Status(checkRunning: LinkChecker.shared.isRunning, channels: entries)
+        return (try? encoder.encode(status)) ?? Data("{}".utf8)
     }
 
     private static func clean(_ text: String) -> String {

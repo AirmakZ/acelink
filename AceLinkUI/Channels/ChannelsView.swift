@@ -400,8 +400,21 @@ struct ChannelsView: View {
     @AppStorage("showRemoteList") private var showRemote = false
     /// The sidebar shrunk to a column of channel icons (the sidebar button's "hidden").
     @AppStorage("sidebarIconsOnly") private var iconsOnly = false
+    /// The last group selected in each list, shown again when switching back to it.
+    @AppStorage("lastLocalGroup") private var lastLocalGroup = ""
+    @AppStorage("lastRemoteGroup") private var lastRemoteGroup = ""
 
     private var current: ChannelStore { showRemote ? remoteStore : store }
+
+    private func rememberSelection(_ id: UUID) {
+        if showRemote { lastRemoteGroup = id.uuidString } else { lastLocalGroup = id.uuidString }
+    }
+
+    /// The current list's last selected group if it's still shown, else its first one.
+    private var initialSelection: UUID? {
+        let last = UUID(uuidString: showRemote ? lastRemoteGroup : lastLocalGroup)
+        return visibleChannels.first { $0.id == last }?.id ?? visibleChannels.first?.id
+    }
 
     private var search: String { ui.search.trimmingCharacters(in: .whitespaces) }
 
@@ -516,7 +529,13 @@ struct ChannelsView: View {
             Text("The group and its \(channel.links.count) channel(s) will be removed.")
         }
         .onAppear {
-            if ui.selection == nil { ui.selection = current.channels.first?.id }
+            if ui.selection == nil { ui.selection = initialSelection }
+        }
+        .onChange(of: ui.selection) { id in
+            // Only a group of the list on screen: Now Playing selects one of the other list
+            // just before switching to it.
+            guard let id = id, current.channel(id: id) != nil else { return }
+            rememberSelection(id)
         }
         .onChange(of: remote.urlString) { _ in
             guard ui.switchToRemoteOnURL, remote.url != nil else { return }
@@ -545,9 +564,12 @@ struct ChannelsView: View {
         )
         .onChange(of: showRemote) { _ in
             // Picking a stream in Now Playing selects its channel before switching to its
-            // list; otherwise the selection is the other list's, so start at the first channel.
-            if selectedChannel == nil {
-                ui.selection = visibleChannels.first?.id
+            // list; otherwise the selection is the other list's, so go back to the group last
+            // selected in this one.
+            if let channel = selectedChannel {
+                rememberSelection(channel.id)
+            } else {
+                ui.selection = initialSelection
             }
             if showRemote, remoteFailure != nil { remote.refresh() }
         }

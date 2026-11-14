@@ -870,7 +870,7 @@ final class TVShare: ObservableObject {
                 let state = LinkState(link)
                 let status = " ace-status=\"\(state.color)\""
                     + (state.peers.map { " ace-peers=\"\($0)\"" } ?? "")
-                    + (state.kbps.map { " ace-kbps=\"\($0)\"" } ?? "")
+                    + (state.kBps.map { " ace-kBps=\"\($0)\"" } ?? "")
                 out += "#EXTINF:-1\(tvgID)\(logo) group-title=\"\(group)\"\(status)," +
                     "\(group) · \(name)\n\(url)\n"
             }
@@ -887,7 +887,7 @@ final class TVShare: ObservableObject {
         let result: String?
         /// "green", "orange", "red", or "unknown" if it was never checked.
         let color: String
-        let kbps: Int?
+        let kBps: Int?
         let peers: Int?
         /// Being tested, or waiting for its turn, right now. `result` is the previous one.
         let checking: Bool
@@ -900,11 +900,11 @@ final class TVShare: ObservableObject {
             // The peers of this session's check go with its result, not with a saved one.
             peers = settled != nil ? checker.peers[link.id] ?? link.lastPeers : link.lastPeers
             switch settled ?? link.lastResult {
-            case let .available(rate): (result, color, kbps) = ("available", "green", rate)
-            case let .slow(rate): (result, color, kbps) = ("slow", "orange", rate)
-            case .noVideo: (result, color, kbps) = ("noVideo", "red", nil)
-            case .unavailable: (result, color, kbps) = ("unavailable", "red", nil)
-            case .checking, .queued, nil: (result, color, kbps) = (nil, "unknown", nil)
+            case let .available(rate): (result, color, kBps) = ("available", "green", rate)
+            case let .slow(rate): (result, color, kBps) = ("slow", "orange", rate)
+            case .noVideo: (result, color, kBps) = ("noVideo", "red", nil)
+            case .unavailable: (result, color, kBps) = ("unavailable", "red", nil)
+            case .checking, .queued, nil: (result, color, kBps) = (nil, "unknown", nil)
             }
         }
     }
@@ -929,7 +929,8 @@ final class TVShare: ObservableObject {
             let url: String
             let status: String
             let result: String?
-            let kbps: Int?
+            /// The speed measured by the check, in KB/s (kilobytes, like `live`).
+            let kBps: Int?
             let peers: Int?
             let checkedAt: Date?
             let lastSeenAt: Date?
@@ -972,7 +973,7 @@ final class TVShare: ObservableObject {
                         url: "http://\(host):\(port)/play/\(stream.param)/\(stream.hash).m3u8",
                         status: state.color,
                         result: state.result,
-                        kbps: state.kbps,
+                        kBps: state.kBps,
                         peers: state.peers,
                         checkedAt: link.lastChecked,
                         lastSeenAt: link.lastSeen,

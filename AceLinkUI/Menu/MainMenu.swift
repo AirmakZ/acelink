@@ -16,6 +16,12 @@ class MainMenu: NSMenu {
         keyEquivalent: "0"
     )
 
+    let settingsItem = NSMenuItem(
+        title: "Settings…",
+        action: #selector(AppDelegate.showSettingsWindow(_:)),
+        keyEquivalent: ","
+    )
+
     let shareToTVItem = NSMenuItem(
         title: "Share to TV",
         action: #selector(AppDelegate.toggleTVSharing(_:)),
@@ -47,6 +53,8 @@ class MainMenu: NSMenu {
         addItem(showChannelsItem)
         shareToTVItem.target = appDelegate
         addItem(shareToTVItem)
+        settingsItem.target = appDelegate
+        addItem(settingsItem)
         addItem(NSMenuItem.separator())
 
         for partialMenu in partialMenus {

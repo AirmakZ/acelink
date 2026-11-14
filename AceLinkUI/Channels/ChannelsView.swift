@@ -163,6 +163,8 @@ struct PlaybackActions {
     var checkLink: (UUID, UUID) -> Void
     var cancelCheck: () -> Void
     var setTVSharing: (Bool) -> Void
+    /// Opens the Settings window, on a page if given.
+    var showSettings: (SettingsPane?) -> Void
 }
 
 /// View state for ChannelsView. (An ObservableObject instead of @State so the app
@@ -173,8 +175,6 @@ final class ChannelsUIState: ObservableObject {
     @Published var editingLink: LinkEditTarget?
     @Published var bulkAdd: BulkAddTarget?
     @Published var channelPendingDelete: Channel?
-    @Published var showTVPanel = false
-    @Published var showSettings = false
     @Published var showLiveEvents = false
     /// A link that started playing, for the link list to select and scroll to.
     @Published var revealLinkID: UUID?
@@ -399,6 +399,7 @@ struct ChannelsView: View {
     @ObservedObject var remote = RemoteList.shared
     @ObservedObject var remoteStore = RemoteList.shared.store
     @ObservedObject var epg = EPGGuide.shared
+    @ObservedObject var settings = SettingsModel.shared
     let actions: PlaybackActions
 
     @StateObject private var ui = ChannelsUIState()
@@ -476,7 +477,7 @@ struct ChannelsView: View {
                         ToolbarItem {
                             SourcePicker(onMissingURL: {
                                 ui.switchToRemoteOnURL = true
-                                ui.showSettings = true
+                                actions.showSettings(.remoteList)
                             })
                         }
                     }
@@ -566,11 +567,13 @@ struct ChannelsView: View {
         .onChange(of: remote.urlString) { _ in
             guard ui.switchToRemoteOnURL, remote.url != nil else { return }
             ui.switchToRemoteOnURL = false
-            ui.showSettings = false
             showRemote = true
         }
-        .onChange(of: ui.showSettings) { shown in
-            if !shown { ui.switchToRemoteOnURL = false }
+        .onChange(of: settings.importedChannelID) { id in
+            guard let id = id else { return }
+            settings.importedChannelID = nil
+            showRemote = false
+            ui.selection = id
         }
         .onChange(of: ui.search) { _ in
             // What the search shows can rebuild the toolbar (the list's buttons go when
@@ -678,15 +681,12 @@ struct ChannelsView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    ui.showTVPanel.toggle()
+                    actions.showSettings(.shareToTV)
                 } label: {
                     Label("Share to TV", systemImage: tv.isEnabled ? "tv.fill" : "tv")
                         .foregroundColor(tvColor)
                 }
                 .help("Watch your channels on a TV")
-                .popover(isPresented: $ui.showTVPanel, arrowEdge: .bottom) {
-                    TVSharePanel(tv: tv, onToggle: actions.setTVSharing)
-                }
             }
             ToolbarItem(placement: .primaryAction) {
                 Button(action: actions.playFromClipboard) {
@@ -697,14 +697,11 @@ struct ChannelsView: View {
             if #available(macOS 26, *) { ToolbarSpacer(.fixed, placement: .primaryAction) }
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    ui.showSettings.toggle()
+                    actions.showSettings(nil)
                 } label: {
                     Label("Settings", systemImage: "gearshape")
                 }
-                .help("Remote list address, and exporting or importing your channels")
-                .popover(isPresented: $ui.showSettings, arrowEdge: .bottom) {
-                    SettingsPanel(onExport: exportChannels, onImport: importChannels)
-                }
+                .help("Settings: Share to TV, remote list, TV guide, Live Today, your groups. ⌘,")
             }
         }
     }
@@ -718,83 +715,6 @@ struct ChannelsView: View {
         ToolbarSearchField(field: ui.searchField, text: $ui.search)
             .frame(width: 200)
             .help("Show only the channels whose name has these words. ⌘F")
-    }
-
-    // MARK: Export and import
-
-    /// Saves your channels to a file of your choice.
-    private func exportChannels() {
-        ui.showSettings = false
-        // After the popover has closed, so the panel doesn't open behind it.
-        DispatchQueue.main.async {
-            let panel = NSSavePanel()
-            // Otherwise it opens wherever the last panel was (even /Applications).
-            panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            panel.allowedContentTypes = [.json]
-            panel.nameFieldStringValue = "AceLinkUI Channels.json"
-            panel.begin { response in
-                guard response == .OK, let url = panel.url else { return }
-                do {
-                    try store.exportData().write(to: url, options: .atomic)
-                } catch {
-                    NSAlert.error("Could not export the groups: \(error.localizedDescription)")
-                }
-            }
-        }
-    }
-
-    /// Reads a file of channels and adds them to yours or replaces yours, as you choose.
-    private func importChannels() {
-        ui.showSettings = false
-        DispatchQueue.main.async {
-            let panel = NSOpenPanel()
-            // Where an exported file, or one sent from another Mac, usually is.
-            panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            panel.allowedContentTypes = [.json]
-            panel.allowsMultipleSelection = false
-            panel.begin { response in
-                guard response == .OK, let url = panel.url else { return }
-                let backup: ChannelStore.Backup
-                do {
-                    backup = try ChannelStore.readBackup(Data(contentsOf: url))
-                } catch {
-                    NSAlert.warning(
-                        messageText: "Can't import this file",
-                        informativeText: "It isn't a list of groups exported from AceLinkUI."
-                    )
-                    return
-                }
-                guard !backup.channels.isEmpty else {
-                    NSAlert.warning(messageText: "Nothing to import",
-                                    informativeText: "The file has no groups.")
-                    return
-                }
-                guard let replacing = askHowToImport(backup) else { return }
-                let imported = store.importBackup(backup, replacing: replacing)
-                showRemote = false
-                ui.selection = imported.first?.id
-            }
-        }
-    }
-
-    /// Add or replace; nil if cancelled. Doesn't ask when there's nothing to replace.
-    private func askHowToImport(_ backup: ChannelStore.Backup) -> Bool? {
-        if store.channels.isEmpty { return false }
-        let count = backup.channels.count
-        let current = store.channels.count
-        let alert = NSAlert()
-        alert.messageText = "Import \(count) group\(count == 1 ? "" : "s")?"
-        alert.informativeText = "Add them after your \(current) group\(current == 1 ? "" : "s"), " +
-            "or replace yours with them. Replacing can't be undone."
-        alert.addButton(withTitle: "Add")
-        let replace = alert.addButton(withTitle: "Replace")
-        replace.hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn: return false
-        case .alertSecondButtonReturn: return true
-        default: return nil
-        }
     }
 
     @ViewBuilder

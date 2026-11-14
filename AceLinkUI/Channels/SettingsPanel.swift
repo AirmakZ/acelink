@@ -1,12 +1,11 @@
 import SwiftUI
 
-/// The popover of the toolbar's settings button: the remote list's address, and
-/// exporting or importing your own channels.
+/// A page of the Settings window other than Share to TV: the remote list's address, the
+/// TV guide, what Live Today lists, and exporting or importing your own channels.
 struct SettingsPanel: View {
+    let pane: SettingsPane
     @ObservedObject var remote = RemoteList.shared
     @ObservedObject var store = ChannelStore.shared
-    let onExport: () -> Void
-    let onImport: () -> Void
 
     @ObservedObject var epg = EPGGuide.shared
     @ObservedObject var liveFilter = LiveFilter.shared
@@ -20,29 +19,23 @@ struct SettingsPanel: View {
     private var urlChanged: Bool { trimmedURL != remote.urlString }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        switch pane {
+        case .remoteList:
             remoteSection
-            Divider()
-            guideSection
-            if epg.isEnabled {
-                Divider()
-                liveSection
-            }
-            Divider()
-            channelsSection
-        }
-        .padding(16)
-        .frame(width: 400)
-        .onAppear {
-            urlText = remote.urlString
-            // Opened to set the first address (e.g. by picking Remote): type right away.
-            if remote.urlString.isEmpty { urlFieldFocused = true }
+                .onAppear {
+                    urlText = remote.urlString
+                    // Opened to set the first address (e.g. by picking Remote): type right away.
+                    if remote.urlString.isEmpty { urlFieldFocused = true }
+                }
+        case .tvGuide: guideSection
+        case .liveToday: liveSection
+        case .myGroups: channelsSection
+        case .shareToTV: EmptyView() // TVSharePanel
         }
     }
 
     private var remoteSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Remote List").font(.headline)
             Text("An http(s) address of an m3u playlist, shown when the sidebar is switched " +
                 "to Remote. Channels are grouped by group-title.")
                 .font(.caption)
@@ -119,7 +112,6 @@ struct SettingsPanel: View {
 
     private var guideSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("TV Guide").font(.headline)
             Text("XMLTV guides (.xml or .xml.gz) sent with the Share to TV playlist. Channels " +
                 "are matched by name in these guides in order, so later ones fill in what " +
                 "earlier ones lack; a name tagged with a country, like (DE), looks in that " +
@@ -240,12 +232,21 @@ struct SettingsPanel: View {
     /// had on your channels.
     private var liveSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Live Today").font(.headline)
-            Text("The live events listed by the toolbar's calendar button. Competitions are " +
-                "added as the guide brings them, shown until you turn them off.")
+            Text(epg.isEnabled
+                ? "The live events listed by the toolbar's calendar button. Competitions are " +
+                "added as the guide brings them, shown until you turn them off."
+                : "Live Today lists the live events of the TV guide. Turn the guide on in " +
+                "TV Guide to use it.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if epg.isEnabled { liveFilters }
+        }
+        .onAppear { liveFilter.learn(from: epg) }
+    }
+
+    private var liveFilters: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Toggle("Hide previews and talk shows", isOn: Binding(
                 get: { liveFilter.hidesMagazines },
                 set: { liveFilter.setHidesMagazines($0) }
@@ -270,7 +271,7 @@ struct SettingsPanel: View {
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(height: 170)
+            .frame(height: 260)
             .background(RoundedRectangle(cornerRadius: 6)
                 .fill(Color(nsColor: .controlBackgroundColor)))
             .overlay(RoundedRectangle(cornerRadius: 6)
@@ -293,7 +294,6 @@ struct SettingsPanel: View {
             }
             .controlSize(.small)
         }
-        .onAppear { liveFilter.learn(from: epg) }
     }
 
     /// Live events from today on: "3 events".
@@ -303,16 +303,15 @@ struct SettingsPanel: View {
 
     private var channelsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("My Groups").font(.headline)
             Text("\(countText). Export them to a file to keep a copy or move them to " +
                 "another Mac; importing adds a file's groups or replaces yours.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
-                Button("Export…", action: onExport)
+                Button("Export…", action: ChannelBackup.export)
                     .disabled(store.channels.isEmpty)
-                Button("Import…", action: onImport)
+                Button("Import…", action: ChannelBackup.importFile)
             }
         }
     }

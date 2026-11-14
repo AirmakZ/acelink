@@ -42,6 +42,11 @@ enum AppMainMenu {
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                         keyEquivalent: "")
         appMenu.addItem(.separator())
+        let settings = appMenu.addItem(withTitle: "Settings…",
+                                       action: #selector(AppDelegate.showSettingsWindow(_:)),
+                                       keyEquivalent: ",")
+        settings.target = target
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide AceLinkUI", action: #selector(NSApplication.hide(_:)),
                         keyEquivalent: "h")
         appMenu.addItem(.separator())

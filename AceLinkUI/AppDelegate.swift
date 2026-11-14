@@ -43,6 +43,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private var engine: AceStreamEngine?
     private var channelsWindow: ChannelsWindowController?
+    private var settingsWindow: SettingsWindowController?
     private let status = PlaybackStatus.shared
     private let checker = LinkChecker.shared
     private let tv = TVShare.shared
@@ -200,10 +201,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 checkAvailability: { [weak self] in self?.checkAvailability(channelID: $0) },
                 checkLink: { [weak self] in self?.checkAvailability(channelID: $0, linkID: $1) },
                 cancelCheck: { [weak self] in self?.cancelCheck() },
-                setTVSharing: { [weak self] in self?.setTVSharing($0) }
+                setTVSharing: { [weak self] in self?.setTVSharing($0) },
+                showSettings: { [weak self] in self?.showSettings(pane: $0) }
             ))
         }
         channelsWindow?.show()
+    }
+
+    @objc
+    func showSettingsWindow(_: Any?) {
+        showSettings(pane: nil)
+    }
+
+    /// Opens the Settings window, on `pane` if given, else on the page last shown.
+    func showSettings(pane: SettingsPane?) {
+        if settingsWindow == nil {
+            settingsWindow = SettingsWindowController { [weak self] in self?.setTVSharing($0) }
+        }
+        settingsWindow?.show(pane)
     }
 
     func play(link: StreamLink, alongside: Bool = false) {

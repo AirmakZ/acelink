@@ -51,8 +51,6 @@ struct TVSharePanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(16)
-        .frame(width: 420)
     }
 
     private var hiddenCount: Int { TVShare.deadLinkIDs().count }

@@ -216,8 +216,8 @@ struct EPGInfoView: View {
                             Text(programme.title).font(.callout).lineLimit(1)
                         }
                         // The whole row, so the pointer needn't land on the text itself.
-                        .contentShape(Rectangle())
-                        .help(Self.tooltip(programme, hours: hours(programme)))
+                        .overlay(AppKitToolTip(text: Self.tooltip(
+                            programme, hours: hours(programme))))
                     }
                 }
             } else if current == nil {
@@ -235,5 +235,21 @@ struct EPGInfoView: View {
         .padding(16)
         .frame(width: 340)
         .onAppear { epg.ensureSchedules(for: [ref]) }
+    }
+}
+
+/// A tooltip over the view it overlays. SwiftUI's `.help` shows nothing inside the guide's
+/// popover; an AppKit view's `toolTip` does.
+private struct AppKitToolTip: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.toolTip = text
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        view.toolTip = text
     }
 }

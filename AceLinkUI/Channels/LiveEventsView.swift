@@ -70,6 +70,9 @@ struct LiveEventsView: View {
                         row(event).id(event.id)
                     }
                     .listStyle(.inset)
+                    // On the popover's own material: the list's opaque background makes a
+                    // hard, square box in it.
+                    .scrollContentBackground(.hidden)
                     .onAppear {
                         // Past what already ended.
                         guard let next = events.first(where: { $0.programme.stop > Date() })
